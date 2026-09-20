@@ -145,8 +145,14 @@
             flex-direction: column;
             pointer-events: none;
         }
-        #global-drop-overlay.active { display: flex; }
-        #global-drop-overlay h2 { font-size: 1.8rem; color: #fff; margin-top: 12px; }
+        #global-drop-overlay.active {
+            display: flex;
+            pointer-events: auto;
+        }
+        #global-drop-overlay * {
+            pointer-events: none;
+        }
+        #global-drop-overlay h2 { font-size: 1.6rem; color: #fff; margin-top: 12px; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -165,7 +171,7 @@
     <!-- Global Drag and Drop Overlay -->
     <div id="global-drop-overlay">
         <div style="font-size: 3.5rem;">📥</div>
-        <h2>새 동영상을 놓으세요</h2>
+        <h2>Drop video to upload</h2>
     </div>
 
     <div class="container">
@@ -176,9 +182,9 @@
         <!-- Upload Box -->
         <div class="card" id="upload-card">
             <div class="upload-box" id="drop-zone" onclick="document.getElementById('file-input').click()">
-                <div class="upload-icon">📹</div>
-                <h3>동영상 파일을 드래그하거나 클릭하여 업로드하세요</h3>
-                <p class="info-text">MP4, MOV, AVI (6~10초 클립 추천)</p>
+                <div class="upload-icon">🎬</div>
+                <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff; margin-bottom: 6px;">Drop your MP4 here or click to browse</h3>
+                <p class="info-text">Supports MP4, MOV, WebM</p>
                 <input type="file" id="file-input" accept="video/*">
             </div>
         </div>
@@ -190,7 +196,7 @@
                     <canvas id="main-canvas"></canvas>
                 </div>
                 <p class="info-text" style="text-align: center; margin-top: 8px;">
-                    👆 <b>마우스로 워터마크(스파클) 주변을 드래그</b>하여 사각형 상자를 지정하세요.
+                    워터마크 위치를 클릭하거나 드래그하여 지정하세요.
                 </p>
             </div>
 
@@ -245,18 +251,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Result Card: '워터마크 제거 완료' 문구 제거하고 영상과 다운로드만 표시 -->
-        <div class="card result-area" id="result-card">
-            <div style="max-width: 640px; width: 100%; margin: 0 auto;">
-                <video id="clean-video" controls autoplay loop style="width: 100%; border-radius: 8px;"></video>
-            </div>
-            <div style="display: flex; justify-content: center; margin-top: 10px;">
-                <a id="download-btn" class="btn" style="text-decoration: none; max-width: 320px;" download="cleaned_video.mp4">
-                    영상 다운로드
-                </a>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -290,15 +284,25 @@
         const globalOverlay = document.getElementById('global-drop-overlay');
         let dragCounter = 0;
 
-        // 화면 어디서든 드래그 앤 드롭 감지
+        // Prevent browser default file open behavior across the entire window
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(name => {
+            window.addEventListener(name, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }, false);
+            document.body.addEventListener(name, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            }, false);
+        });
+
+        // Global drag-and-drop overlay detection
         window.addEventListener('dragenter', (e) => {
-            e.preventDefault();
             dragCounter++;
             globalOverlay.classList.add('active');
         });
 
         window.addEventListener('dragleave', (e) => {
-            e.preventDefault();
             dragCounter--;
             if (dragCounter <= 0) {
                 dragCounter = 0;
@@ -306,43 +310,56 @@
             }
         });
 
-        window.addEventListener('dragover', (e) => {
-            e.preventDefault();
-        });
-
         window.addEventListener('drop', (e) => {
-            e.preventDefault();
             dragCounter = 0;
             globalOverlay.classList.remove('active');
-            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Dedicated drop-zone handlers
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 handleFile(e.dataTransfer.files[0]);
             }
         });
 
         function handleFile(file) {
-            if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|mov|avi|mkv|webm)$/i)) {
-                return alert('동영상 파일(.mp4, .mov 등)만 업로드할 수 있습니다.');
+            if (!file) return;
+            const isVideo = (file.type && file.type.startsWith('video/')) || file.name.match(/\.(mp4|mov|avi|mkv|webm|m4v)$/i);
+            if (!isVideo) {
+                return alert('Please upload a video file (.mp4, .mov, etc.).');
             }
 
             videoFile = file;
 
-            // 결과 화면이나 작업 화면이 열려있다면 즉시 초기화
-            document.getElementById('result-card').style.display = 'none';
-            document.getElementById('progress-container').style.display = 'none';
+            // Reset modal & progress
+            document.getElementById('progress-modal').classList.remove('active');
             document.getElementById('progress-fill').style.width = '0%';
-            document.getElementById('clean-video').pause();
-            document.getElementById('clean-video').src = '';
 
-            // 업로드 카드 표시 후 로딩 문구
+            // Show upload loading state
             document.getElementById('upload-card').style.display = 'block';
             workspace.style.display = 'none';
-            dropZone.innerHTML = '<div class="upload-icon">⏳</div><h3>새 동영상 첫 프레임 분석 중...</h3>';
+            dropZone.innerHTML = '<div class="upload-icon">⏳</div><h3 style="font-size: 1.15rem; font-weight: 600; color: #fff;">Analyzing video...</h3>';
 
             const formData = new FormData();
             formData.append('video', file);
 
             fetch('/api/extract-frame', { method: 'POST', body: formData })
-                .then(r => r.json())
+                .then(r => {
+                    if (!r.ok) throw new Error('Server returned status ' + r.status);
+                    return r.json();
+                })
                 .then(data => {
                     if (data.error) return alert(data.error);
                     
@@ -353,7 +370,18 @@
                         document.getElementById('upload-card').style.display = 'none';
                         workspace.style.display = 'grid';
 
-                        // 이전 선택 초기화 및 자동 감지 영역 적용
+                        // Restore drop zone markup for next upload
+                        dropZone.innerHTML = `
+                            <div class="upload-icon">🎬</div>
+                            <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff; margin-bottom: 6px;">Drop your MP4 here or click to browse</h3>
+                            <p class="info-text">Supports MP4, MOV, WebM</p>
+                            <input type="file" id="file-input" accept="video/*">
+                        `;
+                        document.getElementById('file-input').onchange = (e) => {
+                            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+                        };
+
+                        // Auto suggested box
                         if (data.suggested_box) {
                             selectedBox = data.suggested_box;
                             drawMain();
@@ -364,7 +392,18 @@
                     };
                     img.src = data.frame_url + '?t=' + Date.now();
                 })
-                .catch(err => alert('오류 발생: ' + err));
+                .catch(err => {
+                    alert('Upload failed: ' + err);
+                    dropZone.innerHTML = `
+                        <div class="upload-icon">🎬</div>
+                        <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff; margin-bottom: 6px;">Drop your MP4 here or click to browse</h3>
+                        <p class="info-text">Supports MP4, MOV, WebM</p>
+                        <input type="file" id="file-input" accept="video/*">
+                    `;
+                    document.getElementById('file-input').onchange = (e) => {
+                        if (e.target.files.length > 0) handleFile(e.target.files[0]);
+                    };
+                });
         }
 
         function initCanvas() {
@@ -576,11 +615,6 @@
         }
 
         function showResult(cleanUrl, origUrl) {
-            workspace.style.display = 'none';
-            document.getElementById('result-card').style.display = 'flex';
-            
-            document.getElementById('clean-video').src = cleanUrl;
-            
             // 기존 파일명 기반으로 {파일명}_removed_watermark.mp4 이름 생성
             let downloadName = "video_removed_watermark.mp4";
             if (videoFile && videoFile.name) {
@@ -589,10 +623,6 @@
                 downloadName = `${baseName}_removed_watermark.mp4`;
             }
 
-            const downloadBtn = document.getElementById('download-btn');
-            downloadBtn.href = cleanUrl;
-            downloadBtn.download = downloadName;
-
             // 처리 완료 시 브라우저에서 자동 다운로드 실행
             const autoLink = document.createElement('a');
             autoLink.href = cleanUrl;
@@ -600,6 +630,16 @@
             document.body.appendChild(autoLink);
             autoLink.click();
             document.body.removeChild(autoLink);
+
+            // 작업 공간 유지 및 버튼 상태 업데이트
+            startBtn.disabled = false;
+            const originalText = startBtn.textContent;
+            startBtn.textContent = '제거 완료 (다운로드됨)';
+            startBtn.style.background = '#10b981';
+            setTimeout(() => {
+                startBtn.textContent = originalText;
+                startBtn.style.background = '';
+            }, 3500);
         }
     </script>
 </body>
