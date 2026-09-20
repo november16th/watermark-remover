@@ -55,7 +55,7 @@
             border: 1px solid var(--border);
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
-        canvas { display: block; cursor: crosshair; }
+        canvas { display: block; cursor: crosshair; outline: none; }
 
         /* Sidebar Controls */
         .sidebar { display: flex; flex-direction: column; gap: 16px; }
@@ -196,7 +196,7 @@
                     <canvas id="main-canvas"></canvas>
                 </div>
                 <p class="info-text" style="text-align: center; margin-top: 8px;">
-                    워터마크 위치를 클릭하거나 드래그하여 지정하세요.
+                    워터마크 위치를 클릭하거나 드래그하여 지정하세요. (방향키 ⬅️➡️⬆️⬇️ 로 1px 미세조정, Shift+방향키: 5px)
                 </p>
             </div>
 
@@ -463,6 +463,9 @@
 
         // Mouse Down: 드래그 시작 또는 단순 클릭 준비
         mainCanvas.onmousedown = (e) => {
+            if (document.activeElement && document.activeElement !== document.body) {
+                document.activeElement.blur();
+            }
             const rect = mainCanvas.getBoundingClientRect();
             startX = (e.clientX - rect.left);
             startY = (e.clientY - rect.top);
@@ -526,6 +529,50 @@
                 startBtn.disabled = false;
             }
         };
+
+        let maskPreviewTimer = null;
+        function debouncedMaskPreview(delay = 120) {
+            if (maskPreviewTimer) clearTimeout(maskPreviewTimer);
+            maskPreviewTimer = setTimeout(() => {
+                updateMaskPreview();
+            }, delay);
+        }
+
+        // 키보드 방향키(상/하/좌/우) 미세조정: 1px 이동 (Shift 키와 함께 누르면 5px 이동)
+        window.addEventListener('keydown', (e) => {
+            if (!selectedBox || !originalImg || workspace.style.display === 'none') return;
+
+            // 좌표 입력 필드(input/textarea)에 직접 입력 중일 때는 기본 커서 이동 허용
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+                return;
+            }
+
+            const step = e.shiftKey ? 5 : 1;
+            let moved = false;
+
+            if (e.key === 'ArrowLeft') {
+                selectedBox.x = Math.max(0, selectedBox.x - step);
+                moved = true;
+            } else if (e.key === 'ArrowRight') {
+                selectedBox.x = Math.min(originalImg.width - selectedBox.w, selectedBox.x + step);
+                moved = true;
+            } else if (e.key === 'ArrowUp') {
+                selectedBox.y = Math.max(0, selectedBox.y - step);
+                moved = true;
+            } else if (e.key === 'ArrowDown') {
+                selectedBox.y = Math.min(originalImg.height - selectedBox.h, selectedBox.y + step);
+                moved = true;
+            }
+
+            if (moved) {
+                e.preventDefault();
+                drawMain();
+                syncInputsWithBox();
+                debouncedMaskPreview(120);
+                startBtn.disabled = false;
+            }
+        });
 
 
 
