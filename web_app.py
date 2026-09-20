@@ -63,6 +63,7 @@ class BoxModel(BaseModel):
 class ProcessRequest(BaseModel):
     box: BoxModel
     dilate: int = 4
+    mode: str = "auto"  # 'auto' (다이아몬드 정밀), 'diamond' (강제 다이아몬드), 'box' (전체 사각형)
 
 
 @app.get("/")
@@ -132,7 +133,7 @@ async def preview_mask(req: ProcessRequest):
 
     # 정밀 스파클 마스크 생성
     mask = create_precise_shape_mask(
-        roi, (local_bx, local_by, bw, bh), dilate_px=req.dilate
+        roi, (local_bx, local_by, bw, bh), dilate_px=req.dilate, mask_mode=req.mode
     )
 
     # 마스크 시각화 (스파클 부분만 잘라서 확대해 반환)
@@ -146,7 +147,7 @@ async def preview_mask(req: ProcessRequest):
     }
 
 
-def run_processing_task(task_id, session_id, box, dilate_px):
+def run_processing_task(task_id, session_id, box, dilate_px, mode="auto"):
     sess = sessions[session_id]
     input_path = sess["input_video"]
     sess_dir = TEMP_DIR / session_id
@@ -173,7 +174,7 @@ def run_processing_task(task_id, session_id, box, dilate_px):
     ret_first, first_frame = cap.read()
     first_roi = first_frame[ry:ry + rh, rx:rx + rw]
     inpaint_mask = create_precise_shape_mask(
-        first_roi, (local_bx, local_by, bw, bh), dilate_px=dilate_px
+        first_roi, (local_bx, local_by, bw, bh), dilate_px=dilate_px, mask_mode=mode
     )
     blend_mask = create_feathered_blend_mask(
         (rh, rw), (local_bx, local_by, bw, bh), feather_radius=4
@@ -246,7 +247,7 @@ async def process_video_endpoint(req: ProcessRequest):
 
     t = threading.Thread(
         target=run_processing_task,
-        args=(task_id, session_id, req.box, req.dilate),
+        args=(task_id, session_id, req.box, req.dilate, req.mode),
     )
     t.daemon = True
     t.start()

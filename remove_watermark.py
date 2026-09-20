@@ -57,62 +57,99 @@ def create_mask_for_roi(roi_shape, watermark_local_box, dilation_iterations=2):
     return mask
 
 
-def create_precise_shape_mask(roi_img, watermark_local_box, dilate_px=4):
+def create_precise_shape_mask(roi_img, watermark_local_box, dilate_px=4, mask_mode="auto"):
     """
-    지정된 워터마크 영역 내에서 스파클(다이아몬드) 아이콘 형태만 정밀하게 분리하여 마스크를 생성합니다.
-    불필요한 배경(마룻바닥, 옷자락 등)을 지우지 않으므로 프레임 간 일렁거림을 방지합니다.
+    지정된 워터마크 영역 내에서 스파클(다이아몬드) 아이콘 형태를 정밀하게 분리합니다.
+    돌담, 꽃잎 등 복잡하거나 명암비가 낮은 배경에서도 다이아몬드 윤곽을 안정적으로 검출합니다.
 
     Args:
         roi_img: BGR ROI 이미지
         watermark_local_box: (x, y, w, h) ROI 내부에서의 워터마크 영역
         dilate_px: 스파클 외곽 테두리 확장 픽셀 (기본: 4px)
+        mask_mode: 'auto' (정밀 스파클 추출), 'box' (사각형 영역 전체)
     Returns:
         numpy array (H, W) uint8 바이너리 마스크 (255: 복원 대상, 0: 배경 보존)
     """
     rh, rw = roi_img.shape[:2]
     lx, ly, lw, lh = watermark_local_box
-    
+
+    if mask_mode == "box":
+        mask = np.zeros((rh, rw), dtype=np.uint8)
+        cv2.rectangle(mask, (lx, ly), (lx + lw, ly + lh), 255, -1)
+        return mask
+
     crop = roi_img[ly:ly+lh, lx:lx+lw]
-    if crop.size == 0:
+    if crop.size == 0 or lw < 10 or lh < 10:
         return create_mask_for_roi((rh, rw), watermark_local_box)
-        
+
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    
-    # 스파클(밝은 흰색/반투명) 분리
-    mean_val = np.mean(gray)
-    thresh_val = max(int(mean_val + (255 - mean_val) * 0.35), 150)
-    _, binary = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
-    
-    # 노이즈 제거
-    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_small)
-    
-    # 컨투어 중 가장 중심에 가까운 스파클 형태 찾기
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     mask_crop = np.zeros((lh, lw), dtype=np.uint8)
+
+    # 1. 다중 임계값 탐색 및 그라디언트 엣지 조합
+    # Gemini 워터마크는 4점 별 모양/다이아몬드이며 반투명함
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 상위 밝기 픽셀 기반 1차 추출
+    mean_val = np.mean(blurred)
+    std_val = np.std(blurred)
+    # 배경 평균 대비 밝은 영역 (최소 120 이상)
+    thresh_val = min(max(int(mean_val + std_val * 0.6), 120), 220)
+    _, binary = cv2.threshold(blurred, thresh_val, 255, cv2.THRESH_BINARY)
+
+    # Canny 엣지와 합성하여 윤곽선 강화
+    edges = cv2.Canny(blurred, 30, 100)
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel_close)
+    combined = cv2.bitwise_or(binary, edges_closed)
+
+    # 중심부 가중치 마스크 (테두리 밖의 잡음 꽃잎 배제)
+    h_c, w_c = lh, lw
+    cx, cy = w_c / 2, h_c / 2
+    y_coords, x_coords = np.ogrid[:h_c, :w_c]
+    dist_from_center = np.sqrt((x_coords - cx)**2 + (y_coords - cy)**2)
+    radius_max = min(w_c, h_c) * 0.48
+    center_roi_mask = (dist_from_center <= radius_max).astype(np.uint8) * 255
+    combined_center = cv2.bitwise_and(combined, center_roi_mask)
+
+    contours, _ = cv2.findContours(combined_center, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    detected = False
     if contours:
-        cx_box, cy_box = lw / 2, lh / 2
-        def dist_center(cnt):
+        # 중심에 가장 가깝고 적절한 크기(전체 영역의 5%~60%)를 가진 컨투어 탐색
+        box_area = lw * lh
+        def score_contour(cnt):
             bx, by, bw, bh = cv2.boundingRect(cnt)
-            return (bx + bw/2 - cx_box)**2 + (by + bh/2 - cy_box)**2
-            
-        valid = [c for c in contours if cv2.contourArea(c) > 15]
+            area = cv2.contourArea(cnt)
+            if area < 30 or area > box_area * 0.75:
+                return 999999
+            dist_sq = (bx + bw/2 - cx)**2 + (by + bh/2 - cy)**2
+            return dist_sq
+
+        valid = [c for c in contours if score_contour(c) < 999999]
         if valid:
-            target_cnt = min(valid, key=dist_center)
-            cv2.drawContours(mask_crop, [target_cnt], -1, 255, -1)
-        else:
-            largest = max(contours, key=cv2.contourArea)
-            cv2.drawContours(mask_crop, [largest], -1, 255, -1)
-    else:
-        mask_crop[:, :] = 255
-        
-    # 테두리 번짐(Anti-aliasing) 방지를 위해 살짝 확장(3~4px)
+            target_cnt = min(valid, key=score_contour)
+            hull = cv2.convexHull(target_cnt)
+            cv2.drawContours(mask_crop, [hull], -1, 255, -1)
+            detected = True
+
+    # 2. 만약 배경 명암비가 복잡하여 스파클 형태가 잘 안 잡힌 경우:
+    # ✦ 완벽한 기하학적 다이아몬드/스파클 템플릿 마스크를 생성하여 합성
+    if not detected or cv2.countNonZero(mask_crop) < (lw * lh * 0.08):
+        # 다이아몬드 스파클 4점 다각형 그리기 (안전망)
+        pts = np.array([
+            [int(cx), int(cy - h_c * 0.42)],  # 상
+            [int(cx + w_c * 0.42), int(cy)],  # 우
+            [int(cx), int(cy + h_c * 0.42)],  # 하
+            [int(cx - w_c * 0.42), int(cy)]   # 좌
+        ], dtype=np.int32)
+        cv2.fillConvexPoly(mask_crop, pts, 255)
+
+    # 테두리 확장(Dilation) 적용
     if dilate_px > 0:
         ksize = dilate_px * 2 + 1
         kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
         mask_crop = cv2.dilate(mask_crop, kernel_dilate, iterations=1)
-        
+
     full_mask = np.zeros((rh, rw), dtype=np.uint8)
     full_mask[ly:ly+lh, lx:lx+lw] = mask_crop
     return full_mask
