@@ -97,14 +97,31 @@
         .progress-bar-bg { width: 100%; height: 10px; background: #000; border-radius: 5px; overflow: hidden; margin-top: 6px; }
         .progress-bar-fill { width: 0%; height: 100%; background: var(--success); transition: width 0.3s; }
 
-        /* Result Area */
-        .result-area { display: none; flex-direction: column; gap: 16px; margin-top: 20px; }
-        .video-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        @media (max-width: 700px) { .video-grid { grid-template-columns: 1fr; } }
-        video { width: 100%; border-radius: 8px; background: #000; }
+        /* Drag overlay on entire window */
+        #global-drop-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(15, 23, 42, 0.88);
+            border: 4px dashed #3b82f6;
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            pointer-events: none;
+        }
+        #global-drop-overlay.active { display: flex; }
+        #global-drop-overlay h2 { font-size: 1.8rem; color: #fff; margin-top: 12px; }
     </style>
 </head>
 <body>
+    <!-- Global Drag and Drop Overlay -->
+    <div id="global-drop-overlay">
+        <div style="font-size: 3.5rem;">📥</div>
+        <h2>여기에 새 동영상을 놓으세요!</h2>
+        <p style="color: #94a3b8; margin-top: 6px;">즉시 다음 작업으로 이어집니다.</p>
+    </div>
+
     <div class="container">
         <header>
             <h1>✨ AI 영상 워터마크 정밀 제거기</h1>
@@ -212,20 +229,59 @@
             if (e.target.files.length > 0) handleFile(e.target.files[0]);
         };
 
-        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = '#3b82f6'; };
-        dropZone.ondragleave = () => { dropZone.style.borderColor = '#334155'; };
-        dropZone.ondrop = (e) => {
+        const globalOverlay = document.getElementById('global-drop-overlay');
+        let dragCounter = 0;
+
+        // 화면 어디서든 드래그 앤 드롭 감지
+        window.addEventListener('dragenter', (e) => {
             e.preventDefault();
-            dropZone.style.borderColor = '#334155';
-            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
-        };
+            dragCounter++;
+            globalOverlay.classList.add('active');
+        });
+
+        window.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter <= 0) {
+                dragCounter = 0;
+                globalOverlay.classList.remove('active');
+            }
+        });
+
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragCounter = 0;
+            globalOverlay.classList.remove('active');
+            if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
 
         function handleFile(file) {
+            if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|mov|avi|mkv|webm)$/i)) {
+                return alert('동영상 파일(.mp4, .mov 등)만 업로드할 수 있습니다.');
+            }
+
             videoFile = file;
+
+            // 결과 화면이나 작업 화면이 열려있다면 즉시 초기화
+            document.getElementById('result-card').style.display = 'none';
+            document.getElementById('progress-container').style.display = 'none';
+            document.getElementById('progress-fill').style.width = '0%';
+            document.getElementById('clean-video').pause();
+            document.getElementById('clean-video').src = '';
+
+            // 업로드 카드 표시 후 로딩 문구
+            document.getElementById('upload-card').style.display = 'block';
+            workspace.style.display = 'none';
+            dropZone.innerHTML = '<div class="upload-icon">⏳</div><h3>새 동영상 첫 프레임 분석 중...</h3>';
+
             const formData = new FormData();
             formData.append('video', file);
-
-            dropZone.innerHTML = '<div class="upload-icon">⏳</div><h3>첫 프레임 분석 중...</h3>';
 
             fetch('/api/extract-frame', { method: 'POST', body: formData })
                 .then(r => r.json())
@@ -239,7 +295,7 @@
                         document.getElementById('upload-card').style.display = 'none';
                         workspace.style.display = 'grid';
 
-                        // 자동 감지된 영역이 있다면 표시
+                        // 이전 선택 초기화 및 자동 감지 영역 적용
                         if (data.suggested_box) {
                             selectedBox = data.suggested_box;
                             drawMain();
