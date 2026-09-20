@@ -40,20 +40,20 @@
         .upload-icon { font-size: 2.2rem; margin-bottom: 10px; }
 
         /* Workspace Grid */
-        .workspace { display: none; grid-template-columns: 1fr 340px; gap: 20px; }
+        .workspace { display: none; grid-template-columns: auto 360px; gap: 24px; justify-content: center; }
         @media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } }
 
-        /* Canvas Wrapper */
+        /* Canvas Wrapper - 9:16 세로 영상이 잘림 없이 한눈에 들어오도록 최적화 */
         .canvas-container {
             position: relative;
             background: #000;
             border-radius: 8px;
-            overflow: auto;
-            max-height: 680px;
+            overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
             border: 1px solid var(--border);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
         canvas { display: block; cursor: crosshair; }
 
@@ -174,6 +174,30 @@
                             <span>2px (초정밀)</span>
                             <span id="dilate-val">4px</span>
                             <span>12px (여유)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 수동 픽셀 좌표 지정 카드 -->
+                <div class="card">
+                    <div class="sidebar-title">📍 워터마크 좌표 (클릭/직접 입력)</div>
+                    <p class="info-text" style="margin-top: 6px;">영상 위를 <b>마우스로 클릭</b>하면 해당 픽셀 좌표가 자동으로 찍힙니다.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-dim);">X 위치 (px)</label>
+                            <input type="number" id="input-x" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onManualCoordChange()">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-dim);">Y 위치 (px)</label>
+                            <input type="number" id="input-y" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onManualCoordChange()">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-dim);">가로 너비 (W)</label>
+                            <input type="number" id="input-w" value="70" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onManualCoordChange()">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-dim);">세로 높이 (H)</label>
+                            <input type="number" id="input-h" value="70" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onManualCoordChange()">
                         </div>
                     </div>
                 </div>
@@ -308,6 +332,7 @@
                         if (data.suggested_box) {
                             selectedBox = data.suggested_box;
                             drawMain();
+                            syncInputsWithBox();
                             updateMaskPreview();
                             startBtn.disabled = false;
                         }
@@ -318,11 +343,35 @@
         }
 
         function initCanvas() {
-            const maxW = 700;
-            scale = Math.min(1.0, maxW / originalImg.width);
-            mainCanvas.width = originalImg.width * scale;
-            mainCanvas.height = originalImg.height * scale;
+            // 9:16 비율 세로 영상이 스크롤 없이 화면 한눈에 보이도록 브라우저 높이(vh)에 맞게 스케일링
+            const availableHeight = Math.min(window.innerHeight - 180, 780);
+            const scaleByH = availableHeight / originalImg.height;
+            const scaleByW = 440 / originalImg.width;
+            scale = Math.min(scaleByH, scaleByW, 1.0);
+
+            mainCanvas.width = Math.round(originalImg.width * scale);
+            mainCanvas.height = Math.round(originalImg.height * scale);
             drawMain();
+        }
+
+        function syncInputsWithBox() {
+            if (!selectedBox) return;
+            document.getElementById('input-x').value = selectedBox.x;
+            document.getElementById('input-y').value = selectedBox.y;
+            document.getElementById('input-w').value = selectedBox.w;
+            document.getElementById('input-h').value = selectedBox.h;
+        }
+
+        function onManualCoordChange() {
+            const x = parseInt(document.getElementById('input-x').value) || 0;
+            const y = parseInt(document.getElementById('input-y').value) || 0;
+            const w = parseInt(document.getElementById('input-w').value) || 60;
+            const h = parseInt(document.getElementById('input-h').value) || 60;
+
+            selectedBox = { x, y, w, h };
+            drawMain();
+            updateMaskPreview();
+            startBtn.disabled = false;
         }
 
         function drawMain() {
@@ -337,21 +386,24 @@
                 ctx.strokeStyle = '#eab308';
                 ctx.lineWidth = 2;
                 ctx.strokeRect(sx, sy, sw, sh);
-                ctx.fillStyle = 'rgba(234, 179, 8, 0.15)';
+                ctx.fillStyle = 'rgba(234, 179, 8, 0.18)';
                 ctx.fillRect(sx, sy, sw, sh);
 
                 ctx.font = '12px sans-serif';
                 ctx.fillStyle = '#eab308';
-                ctx.fillText(`워터마크: ${selectedBox.w}x${selectedBox.h}`, sx, sy - 6);
+                ctx.fillText(`워터마크: (${selectedBox.x}, ${selectedBox.y}) ${selectedBox.w}x${selectedBox.h}`, Math.max(10, sx), Math.max(16, sy - 6));
             }
         }
 
-        // Mouse Drag selection
+        let dragMoved = false;
+
+        // Mouse Down: 드래그 시작 또는 단순 클릭 준비
         mainCanvas.onmousedown = (e) => {
             const rect = mainCanvas.getBoundingClientRect();
             startX = (e.clientX - rect.left);
             startY = (e.clientY - rect.top);
             isDragging = true;
+            dragMoved = false;
         };
 
         mainCanvas.onmousemove = (e) => {
@@ -360,23 +412,51 @@
             const currX = (e.clientX - rect.left);
             const currY = (e.clientY - rect.top);
 
-            const x = Math.min(startX, currX);
-            const y = Math.min(startY, currY);
-            const w = Math.abs(currX - startX);
-            const h = Math.abs(currY - startY);
+            const dist = Math.hypot(currX - startX, currY - startY);
+            if (dist > 5) {
+                dragMoved = true;
+                const x = Math.min(startX, currX);
+                const y = Math.min(startY, currY);
+                const w = Math.abs(currX - startX);
+                const h = Math.abs(currY - startY);
 
-            selectedBox = {
-                x: Math.round(x / scale),
-                y: Math.round(y / scale),
-                w: Math.round(w / scale),
-                h: Math.round(h / scale)
-            };
-            drawMain();
+                selectedBox = {
+                    x: Math.round(x / scale),
+                    y: Math.round(y / scale),
+                    w: Math.round(w / scale),
+                    h: Math.round(h / scale)
+                };
+                drawMain();
+                syncInputsWithBox();
+            }
         };
 
-        mainCanvas.onmouseup = () => {
+        mainCanvas.onmouseup = (e) => {
             if (!isDragging) return;
             isDragging = false;
+
+            // 단순 클릭인 경우: 클릭한 지점의 픽셀 좌표를 중심으로 워터마크 박스 자동 배치
+            if (!dragMoved) {
+                const rect = mainCanvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left);
+                const clickY = (e.clientY - rect.top);
+
+                const origX = Math.round(clickX / scale);
+                const origY = Math.round(clickY / scale);
+
+                const w = parseInt(document.getElementById('input-w').value) || 70;
+                const h = parseInt(document.getElementById('input-h').value) || 70;
+
+                selectedBox = {
+                    x: Math.max(0, origX - Math.round(w / 2)),
+                    y: Math.max(0, origY - Math.round(h / 2)),
+                    w: w,
+                    h: h
+                };
+                drawMain();
+                syncInputsWithBox();
+            }
+
             if (selectedBox && selectedBox.w > 10 && selectedBox.h > 10) {
                 updateMaskPreview();
                 startBtn.disabled = false;
