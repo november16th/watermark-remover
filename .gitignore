@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+web_temp/
+temp_*.mp4
+watermark_preview.png
+*_preview.png
+*_clean.mp4
+.DS_Store
+.venv/
+venv/

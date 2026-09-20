@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 영상 워터마크 정밀 제거기</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
+            --border: #334155;
+            --success: #10b981;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text); padding: 24px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        .container { max-width: 1080px; width: 100%; display: flex; flex-direction: column; gap: 20px; }
+        
+        header { text-align: center; margin-bottom: 10px; }
+        header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; margin-bottom: 6px; }
+        header p { color: var(--text-dim); font-size: 0.95rem; }
+
+        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        
+        /* Upload Area */
+        .upload-box {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 30px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .upload-box:hover { border-color: var(--accent); background: rgba(59, 130, 246, 0.05); }
+        .upload-box input { display: none; }
+        .upload-icon { font-size: 2.2rem; margin-bottom: 10px; }
+
+        /* Workspace Grid */
+        .workspace { display: none; grid-template-columns: 1fr 340px; gap: 20px; }
+        @media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } }
+
+        /* Canvas Wrapper */
+        .canvas-container {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 680px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border: 1px solid var(--border);
+        }
+        canvas { display: block; cursor: crosshair; }
+
+        /* Sidebar Controls */
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+        .sidebar-title { font-size: 1rem; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+        
+        .preview-box {
+            background: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .preview-box canvas { margin: 0 auto; max-width: 100%; border: 1px solid #475569; border-radius: 4px; }
+        .info-text { font-size: 0.85rem; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+
+        .btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover { background: var(--accent-hover); }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { background: rgba(255,255,255,0.05); }
+
+        /* Progress Modal/Bar */
+        .progress-container { display: none; margin-top: 10px; }
+        .progress-bar-bg { width: 100%; height: 10px; background: #000; border-radius: 5px; overflow: hidden; margin-top: 6px; }
+        .progress-bar-fill { width: 0%; height: 100%; background: var(--success); transition: width 0.3s; }
+
+        /* Result Area */
+        .result-area { display: none; flex-direction: column; gap: 16px; margin-top: 20px; }
+        .video-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 700px) { .video-grid { grid-template-columns: 1fr; } }
+        video { width: 100%; border-radius: 8px; background: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>✨ AI 영상 워터마크 정밀 제거기</h1>
+            <p>스파클 다이아몬드 아이콘만 정밀하게 마스킹하여 영상 일렁거림을 방지합니다.</p>
+        </header>
+
+        <!-- Upload Box -->
+        <div class="card" id="upload-card">
+            <div class="upload-box" id="drop-zone" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📹</div>
+                <h3>동영상 파일을 드래그하거나 클릭하여 업로드하세요</h3>
+                <p class="info-text">MP4, MOV, AVI (6~10초 클립 추천)</p>
+                <input type="file" id="file-input" accept="video/*">
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="workspace" id="workspace">
+            <div class="card" style="padding: 12px;">
+                <div class="canvas-container">
+                    <canvas id="main-canvas"></canvas>
+                </div>
+                <p class="info-text" style="text-align: center; margin-top: 8px;">
+                    👆 <b>마우스로 워터마크(스파클) 주변을 드래그</b>하여 사각형 상자를 지정하세요.
+                </p>
+            </div>
+
+            <!-- Controls -->
+            <div class="sidebar">
+                <div class="card">
+                    <div class="sidebar-title">🎯 정밀 마스크 미리보기</div>
+                    <div class="preview-box" style="margin-top: 12px;">
+                        <canvas id="mask-canvas" width="120" height="120"></canvas>
+                        <p class="info-text" id="mask-status">워터마크 영역을 드래그하세요.</p>
+                    </div>
+                    
+                    <div style="margin-top: 16px;">
+                        <label style="font-size: 0.85rem; color: var(--text-dim);">마스크 테두리 여유 (픽셀)</label>
+                        <input type="range" id="dilate-slider" min="2" max="10" value="4" style="width: 100%; margin-top: 4px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-dim);">
+                            <span>2px (초정밀)</span>
+                            <span id="dilate-val">4px</span>
+                            <span>10px (여유)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <button class="btn" id="start-btn" disabled onclick="startProcessing()">
+                        🚀 워터마크 제거 시작
+                    </button>
+                    
+                    <div class="progress-container" id="progress-container">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+                            <span id="progress-status">AI 복원 처리 중...</span>
+                            <span id="progress-percent">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="progress-fill"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Card -->
+        <div class="card result-area" id="result-card">
+            <div class="sidebar-title">🎉 워터마크 제거 완료! (자동 다운로드됨)</div>
+            <div style="max-width: 640px; width: 100%; margin: 0 auto;">
+                <video id="clean-video" controls autoplay loop style="width: 100%; border-radius: 8px;"></video>
+            </div>
+            <div style="display: flex; justify-content: center; margin-top: 10px;">
+                <a id="download-btn" class="btn" style="text-decoration: none; max-width: 320px;" download="cleaned_video.mp4">
+                    💾 영상 다운로드
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const workspace = document.getElementById('workspace');
+        const mainCanvas = document.getElementById('main-canvas');
+        const maskCanvas = document.getElementById('mask-canvas');
+        const ctx = mainCanvas.getContext('2d');
+        const maskCtx = maskCanvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const dilateSlider = document.getElementById('dilate-slider');
+        const dilateVal = document.getElementById('dilate-val');
+
+        let videoFile = null;
+        let originalImg = null;
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let selectedBox = null; // {x, y, w, h} in original image coords
+        let scale = 1.0;
+
+        dilateSlider.oninput = () => {
+            dilateVal.textContent = dilateSlider.value + 'px';
+            if (selectedBox) updateMaskPreview();
+        };
+
+        fileInput.onchange = (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        };
+
+        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = '#3b82f6'; };
+        dropZone.ondragleave = () => { dropZone.style.borderColor = '#334155'; };
+        dropZone.ondrop = (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#334155';
+            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+        };
+
+        function handleFile(file) {
+            videoFile = file;
+            const formData = new FormData();
+            formData.append('video', file);
+
+            dropZone.innerHTML = '<div class="upload-icon">⏳</div><h3>첫 프레임 분석 중...</h3>';
+
+            fetch('/api/extract-frame', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) return alert(data.error);
+                    
+                    const img = new Image();
+                    img.onload = () => {
+                        originalImg = img;
+                        initCanvas();
+                        document.getElementById('upload-card').style.display = 'none';
+                        workspace.style.display = 'grid';
+
+                        // 자동 감지된 영역이 있다면 표시
+                        if (data.suggested_box) {
+                            selectedBox = data.suggested_box;
+                            drawMain();
+                            updateMaskPreview();
+                            startBtn.disabled = false;
+                        }
+                    };
+                    img.src = data.frame_url + '?t=' + Date.now();
+                })
+                .catch(err => alert('오류 발생: ' + err));
+        }
+
+        function initCanvas() {
+            const maxW = 700;
+            scale = Math.min(1.0, maxW / originalImg.width);
+            mainCanvas.width = originalImg.width * scale;
+            mainCanvas.height = originalImg.height * scale;
+            drawMain();
+        }
+
+        function drawMain() {
+            ctx.drawImage(originalImg, 0, 0, mainCanvas.width, mainCanvas.height);
+            if (selectedBox) {
+                const sx = selectedBox.x * scale;
+                const sy = selectedBox.y * scale;
+                const sw = selectedBox.w * scale;
+                const sh = selectedBox.h * scale;
+
+                // Selection Box
+                ctx.strokeStyle = '#eab308';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(sx, sy, sw, sh);
+                ctx.fillStyle = 'rgba(234, 179, 8, 0.15)';
+                ctx.fillRect(sx, sy, sw, sh);
+
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#eab308';
+                ctx.fillText(`워터마크: ${selectedBox.w}x${selectedBox.h}`, sx, sy - 6);
+            }
+        }
+
+        // Mouse Drag selection
+        mainCanvas.onmousedown = (e) => {
+            const rect = mainCanvas.getBoundingClientRect();
+            startX = (e.clientX - rect.left);
+            startY = (e.clientY - rect.top);
+            isDragging = true;
+        };
+
+        mainCanvas.onmousemove = (e) => {
+            if (!isDragging) return;
+            const rect = mainCanvas.getBoundingClientRect();
+            const currX = (e.clientX - rect.left);
+            const currY = (e.clientY - rect.top);
+
+            const x = Math.min(startX, currX);
+            const y = Math.min(startY, currY);
+            const w = Math.abs(currX - startX);
+            const h = Math.abs(currY - startY);
+
+            selectedBox = {
+                x: Math.round(x / scale),
+                y: Math.round(y / scale),
+                w: Math.round(w / scale),
+                h: Math.round(h / scale)
+            };
+            drawMain();
+        };
+
+        mainCanvas.onmouseup = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            if (selectedBox && selectedBox.w > 10 && selectedBox.h > 10) {
+                updateMaskPreview();
+                startBtn.disabled = false;
+            }
+        };
+
+        function updateMaskPreview() {
+            if (!selectedBox) return;
+            const payload = {
+                box: selectedBox,
+                dilate: parseInt(dilateSlider.value)
+            };
+
+            fetch('/api/preview-mask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.mask_url) {
+                    const mImg = new Image();
+                    mImg.onload = () => {
+                        maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                        maskCtx.drawImage(mImg, 0, 0, maskCanvas.width, maskCanvas.height);
+                        document.getElementById('mask-status').innerHTML = '✅ <b>스파클 외곽선만 선택됨!</b><br><small>흰색 영역만 지우고 배경을 보존합니다.</small>';
+                    };
+                    mImg.src = data.mask_url + '?t=' + Date.now();
+                }
+            });
+        }
+
+        function startProcessing() {
+            if (!selectedBox) return;
+
+            startBtn.disabled = true;
+            document.getElementById('progress-container').style.display = 'block';
+
+            const payload = {
+                box: selectedBox,
+                dilate: parseInt(dilateSlider.value)
+            };
+
+            fetch('/api/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    startBtn.disabled = false;
+                    return;
+                }
+                pollProgress(data.task_id);
+            })
+            .catch(err => {
+                alert('처리 요청 실패: ' + err);
+                startBtn.disabled = false;
+            });
+        }
+
+        function pollProgress(taskId) {
+            const interval = setInterval(() => {
+                fetch(`/api/progress/${taskId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const percent = Math.round(data.progress * 100);
+                        document.getElementById('progress-fill').style.width = percent + '%';
+                        document.getElementById('progress-percent').textContent = percent + '%';
+                        document.getElementById('progress-status').textContent = data.status;
+
+                        if (data.done) {
+                            clearInterval(interval);
+                            showResult(data.clean_url, data.orig_url);
+                        }
+                    });
+            }, 500);
+        }
+
+        function showResult(cleanUrl, origUrl) {
+            workspace.style.display = 'none';
+            document.getElementById('result-card').style.display = 'flex';
+            
+            document.getElementById('clean-video').src = cleanUrl;
+            
+            // 기존 파일명 기반으로 {파일명}_removed_watermark.mp4 이름 생성
+            let downloadName = "video_removed_watermark.mp4";
+            if (videoFile && videoFile.name) {
+                const lastDot = videoFile.name.lastIndexOf('.');
+                const baseName = lastDot !== -1 ? videoFile.name.substring(0, lastDot) : videoFile.name;
+                downloadName = `${baseName}_removed_watermark.mp4`;
+            }
+
+            const downloadBtn = document.getElementById('download-btn');
+            downloadBtn.href = cleanUrl;
+            downloadBtn.download = downloadName;
+
+            // 처리 완료 시 브라우저에서 자동 다운로드 실행
+            const autoLink = document.createElement('a');
+            autoLink.href = cleanUrl;
+            autoLink.download = downloadName;
+            document.body.appendChild(autoLink);
+            autoLink.click();
+            document.body.removeChild(autoLink);
+        }
+    </script>
+</body>
+</html>
