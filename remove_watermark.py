@@ -156,31 +156,22 @@ def create_precise_shape_mask(roi_img, watermark_local_box, dilate_px=4, mask_mo
 
 
 
-def create_feathered_blend_mask(roi_shape, watermark_local_box, feather_radius=8):
+def create_feathered_blend_mask(inpaint_mask, feather_radius=4):
     """
-    ROI를 원본에 붙일 때 경계가 부드럽게 블렌딩되도록 feathered 마스크를 생성합니다.
+    실제 인페인팅 마스크(스파클 형태)를 기반으로 외곽만 살짝 블러링된 블렌딩 마스크를 생성합니다.
+    사각형 전체를 블렌딩하지 않고 오직 복원된 픽셀 주변만 합성하므로 배경 일렁거림을 원천 차단합니다.
 
     Args:
-        roi_shape: (H, W) ROI 크기
-        watermark_local_box: (x, y, w, h) ROI 내부에서의 워터마크 좌표
-        feather_radius: 가장자리 블러 반경
+        inpaint_mask: uint8 바이너리 마스크 (0 or 255)
+        feather_radius: 가장자리 블러 반경 (기본: 4px)
     Returns:
         numpy array (H, W) float32 [0, 1] 블렌딩 마스크
     """
-    rh, rw = roi_shape[:2]
-    mask = np.zeros((rh, rw), dtype=np.float32)
-    lx, ly, lw, lh = watermark_local_box
-    # 워터마크 영역보다 약간 넓게 1.0 채우기
-    pad = feather_radius
-    x1 = max(0, lx - pad)
-    y1 = max(0, ly - pad)
-    x2 = min(rw, lx + lw + pad)
-    y2 = min(rh, ly + lh + pad)
-    mask[y1:y2, x1:x2] = 1.0
-    # 가우시안 블러로 가장자리 부드럽게
-    ksize = feather_radius * 2 + 1
-    mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
-    return mask
+    mask_f = (inpaint_mask > 0).astype(np.float32)
+    if feather_radius > 0:
+        ksize = feather_radius * 2 + 1
+        mask_f = cv2.GaussianBlur(mask_f, (ksize, ksize), 0)
+    return np.clip(mask_f, 0.0, 1.0)
 
 
 # ──────────────────────────────────────────────
@@ -592,7 +583,7 @@ def process_video(
         
     first_roi = first_frame[ry:ry + rh, rx:rx + rw].copy()
     inpaint_mask = create_precise_shape_mask(first_roi, (local_wx, local_wy, ww, wh), dilate_px=4)
-    blend_mask = create_feathered_blend_mask((rh, rw), (local_wx, local_wy, ww, wh), feather_radius=4)
+    blend_mask = create_feathered_blend_mask(inpaint_mask, feather_radius=3)
     blend_mask_3ch = np.stack([blend_mask] * 3, axis=-1)
 
     # 비디오 포인터 처음으로 되돌리기

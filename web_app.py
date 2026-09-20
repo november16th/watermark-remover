@@ -176,9 +176,8 @@ def run_processing_task(task_id, session_id, box, dilate_px, mode="auto"):
     inpaint_mask = create_precise_shape_mask(
         first_roi, (local_bx, local_by, bw, bh), dilate_px=dilate_px, mask_mode=mode
     )
-    blend_mask = create_feathered_blend_mask(
-        (rh, rw), (local_bx, local_by, bw, bh), feather_radius=4
-    )
+    # 실제 마스킹된 스파클 외곽 3px만 부드럽게 합성하여 주변 배경 왜곡을 0으로 만듦
+    blend_mask = create_feathered_blend_mask(inpaint_mask, feather_radius=3)
     blend_mask_3ch = np.stack([blend_mask] * 3, axis=-1)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -188,7 +187,8 @@ def run_processing_task(task_id, session_id, box, dilate_px, mode="auto"):
     out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
 
     prev_roi = None
-    ema_alpha = 0.85
+    # 0.70으로 안정화 가중치를 높여 프레임 간 펄럭임/일렁거림 완화
+    ema_alpha = 0.70
     idx = 0
 
     while cap.isOpened():
@@ -199,14 +199,14 @@ def run_processing_task(task_id, session_id, box, dilate_px, mode="auto"):
         roi = frame[ry:ry + rh, rx:rx + rw].copy()
         inpainted_roi = inpainter.inpaint(roi, inpaint_mask)
 
-        # 시간축 스무딩
+        # 시간축 스무딩 (시간적 연속성 보장)
         if prev_roi is not None:
             inpainted_roi = cv2.addWeighted(
                 inpainted_roi, ema_alpha, prev_roi, 1.0 - ema_alpha, 0
             )
         prev_roi = inpainted_roi.copy()
 
-        # 블렌딩
+        # 정밀 합성: 스파클 픽셀 자리만 원본에 대치, 바깥 배경은 원본 100% 보존
         orig_roi_f = frame[ry:ry + rh, rx:rx + rw].astype(np.float32)
         inpaint_f = inpainted_roi.astype(np.float32)
         blended = inpaint_f * blend_mask_3ch + orig_roi_f * (1.0 - blend_mask_3ch)
