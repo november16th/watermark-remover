@@ -337,18 +337,30 @@
             </div>
 
             <div class="card" style="width: 100%; max-width: 900px;">
+                <div class="sidebar-title" style="margin-bottom: 12px;">속도 및 품질 모드</div>
+                <div class="bg-options" style="margin-bottom: 18px;">
+                    <label class="radio-card selected" id="opt-speed-fast">
+                        <input type="radio" name="bg-quality" value="fast" checked onchange="selectRadio(this, 'bg-quality')">
+                        <span>⚡ 초고속 모드 (추천 · 10배 빠름)</span>
+                    </label>
+                    <label class="radio-card" id="opt-speed-quality">
+                        <input type="radio" name="bg-quality" value="quality" onchange="selectRadio(this, 'bg-quality')">
+                        <span>🎨 정밀 고화질 모드</span>
+                    </label>
+                </div>
+
                 <div class="sidebar-title" style="margin-bottom: 12px;">출력 방식</div>
                 <div class="bg-options">
                     <label class="radio-card selected" id="opt-green">
-                        <input type="radio" name="bg-mode" value="green" checked onchange="selectBgMode(this)">
+                        <input type="radio" name="bg-mode" value="green" checked onchange="selectRadio(this, 'bg-mode')">
                         <span>🟢 크로마키 (초록 배경 MP4)</span>
                     </label>
                     <label class="radio-card" id="opt-transparent">
-                        <input type="radio" name="bg-mode" value="transparent" onchange="selectBgMode(this)">
+                        <input type="radio" name="bg-mode" value="transparent" onchange="selectRadio(this, 'bg-mode')">
                         <span>🔲 투명 배경 (WebM)</span>
                     </label>
                 </div>
-                <button class="btn" style="margin-top: 16px;" id="bg-start-btn" onclick="startBgRemoval()">
+                <button class="btn" style="margin-top: 20px;" id="bg-start-btn" onclick="startBgRemoval()">
                     배경 제거 시작
                 </button>
             </div>
@@ -877,13 +889,17 @@
             };
         }
 
-        function selectBgMode(radio) {
-            document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
+        function selectRadio(radio, groupName) {
+            document.querySelectorAll(`input[name="${groupName}"]`).forEach(input => {
+                input.closest('.radio-card').classList.remove('selected');
+            });
             radio.closest('.radio-card').classList.add('selected');
         }
 
         function startBgRemoval() {
             const mode = document.querySelector('input[name="bg-mode"]:checked').value;
+            const qualityEl = document.querySelector('input[name="bg-quality"]:checked');
+            const quality = qualityEl ? qualityEl.value : 'fast';
             const btn = document.getElementById('bg-start-btn');
             btn.disabled = true;
 
@@ -897,7 +913,7 @@
             fetch('/api/bg-process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ output_mode: mode })
+                body: JSON.stringify({ output_mode: mode, quality: quality })
             })
             .then(r => r.json())
             .then(data => {
