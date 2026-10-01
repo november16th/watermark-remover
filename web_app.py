@@ -19,6 +19,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# rembg (AI 배경 제거) — 세션을 한 번만 생성하여 모델 재로드 방지
+from rembg import remove as rembg_remove, new_session as rembg_new_session
+
 # 인페인터 및 유틸리티 가져오기
 from remove_watermark import (
     LamaInpainter,
@@ -51,6 +54,9 @@ tasks = {}
 
 # 단일 Lama Inpainter 인스턴스 (메모리 절약)
 inpainter = LamaInpainter()
+
+# 단일 rembg 세션 (메모리 절약 및 모델 1회 로드)
+rembg_session = rembg_new_session("isnet-general-use")
 
 
 class BoxModel(BaseModel):
@@ -267,7 +273,169 @@ async def get_file(session_id: str, filename: str):
     file_path = TEMP_DIR / session_id / filename
     if not file_path.exists():
         return JSONResponse({"error": "파일을 찾을 수 없습니다."}, status_code=404)
-    return FileResponse(file_path)
+    media_type = None
+    if filename.endswith(".webm"):
+        media_type = "video/webm"
+    return FileResponse(file_path, media_type=media_type)
+
+
+# ──────────────────────────────────────────────
+# 배경 제거 (Background Removal) API
+# ──────────────────────────────────────────────
+
+class BgRemoveRequest(BaseModel):
+    output_mode: str = "green"  # 'green' (크로마키) 또는 'transparent' (WebM alpha)
+
+
+@app.post("/api/bg-upload")
+async def bg_upload(video: UploadFile = File(...)):
+    """배경 제거용 영상 업로드 — 첫 프레임 미리보기 반환"""
+    session_id = "bg_" + str(uuid.uuid4())
+    sess_path = TEMP_DIR / session_id
+    sess_path.mkdir(exist_ok=True)
+
+    input_path = sess_path / "input.mp4"
+    with open(input_path, "wb") as f:
+        shutil.copyfileobj(video.file, f)
+
+    cap = cv2.VideoCapture(str(input_path))
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        return JSONResponse({"error": "영상의 첫 프레임을 읽지 못했습니다."}, status_code=400)
+
+    frame_path = sess_path / "frame_first.png"
+    cv2.imwrite(str(frame_path), frame)
+
+    # rembg로 첫 프레임 배경 제거 미리보기 생성
+    from PIL import Image
+    pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    pil_removed = rembg_remove(pil_frame, session=rembg_session)
+    preview_path = sess_path / "preview_nobg.png"
+    pil_removed.save(str(preview_path))
+
+    sessions[session_id] = {
+        "input_video": str(input_path),
+        "frame_path": str(frame_path),
+    }
+
+    return {
+        "session_id": session_id,
+        "frame_url": f"/api/files/{session_id}/frame_first.png",
+        "preview_url": f"/api/files/{session_id}/preview_nobg.png",
+    }
+
+
+def run_bg_remove_task(task_id, session_id, output_mode="green"):
+    """프레임별 배경 제거 처리 (별도 스레드에서 실행)"""
+    sess = sessions[session_id]
+    input_path = sess["input_video"]
+    sess_dir = TEMP_DIR / session_id
+    frames_dir = sess_dir / "frames"
+    frames_dir.mkdir(exist_ok=True)
+
+    cap = cv2.VideoCapture(input_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    from PIL import Image
+
+    idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        pil_removed = rembg_remove(pil_frame, session=rembg_session)  # RGBA
+
+        if output_mode == "green":
+            # 투명 영역을 초록색으로 채우기
+            bg = Image.new("RGBA", pil_removed.size, (0, 177, 64, 255))
+            composited = Image.alpha_composite(bg, pil_removed)
+            out_frame = cv2.cvtColor(np.array(composited.convert("RGB")), cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(frames_dir / f"frame_{idx:06d}.png"), out_frame)
+        else:
+            # 투명 배경 PNG 저장 (WebM alpha용)
+            pil_removed.save(str(frames_dir / f"frame_{idx:06d}.png"))
+
+        idx += 1
+        tasks[task_id]["progress"] = idx / max(total_frames, 1)
+
+    cap.release()
+
+    tasks[task_id]["status"] = "영상 인코딩 중..."
+
+    if output_mode == "green":
+        output_path = sess_dir / "bg_removed.mp4"
+        temp_raw = sess_dir / "temp_raw_bg.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
+
+        for i in range(idx):
+            f = cv2.imread(str(frames_dir / f"frame_{i:06d}.png"))
+            out.write(f)
+        out.release()
+
+        merge_audio_ffmpeg(str(temp_raw), input_path, str(output_path), crf=18)
+        if temp_raw.exists():
+            temp_raw.unlink()
+
+        tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.mp4"
+        tasks[task_id]["result_filename"] = "bg_removed.mp4"
+    else:
+        # WebM with alpha channel via ffmpeg
+        output_path = sess_dir / "bg_removed.webm"
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-framerate", str(fps),
+            "-i", str(frames_dir / "frame_%06d.png"),
+            "-i", input_path,
+            "-c:v", "libvpx-vp9",
+            "-pix_fmt", "yuva420p",
+            "-b:v", "2M",
+            "-map", "0:v", "-map", "1:a?",
+            "-auto-alt-ref", "0",
+            str(output_path)
+        ]
+        subprocess.run(ffmpeg_cmd, capture_output=True)
+        tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.webm"
+        tasks[task_id]["result_filename"] = "bg_removed.webm"
+
+    # 프레임 정리
+    shutil.rmtree(str(frames_dir), ignore_errors=True)
+
+    tasks[task_id]["progress"] = 1.0
+    tasks[task_id]["done"] = True
+    tasks[task_id]["status"] = "완료!"
+
+
+@app.post("/api/bg-process")
+async def bg_process(req: BgRemoveRequest):
+    """배경 제거 처리 시작"""
+    bg_sessions = [k for k in sessions if k.startswith("bg_")]
+    if not bg_sessions:
+        return JSONResponse({"error": "배경 제거 세션을 찾을 수 없습니다."}, status_code=400)
+
+    session_id = bg_sessions[-1]
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "progress": 0.0,
+        "done": False,
+        "status": "AI 배경 제거 중...",
+    }
+
+    t = threading.Thread(
+        target=run_bg_remove_task,
+        args=(task_id, session_id, req.output_mode),
+    )
+    t.daemon = True
+    t.start()
+
+    return {"task_id": task_id}
 
 
 if __name__ == "__main__":

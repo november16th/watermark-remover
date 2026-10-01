@@ -6,3 +6,4 @@ simple-lama-inpainting>=0.1.0
 fastAPI>=0.100.0
 uvicorn>=0.20.0
 python-multipart>=0.0.9
+rembg>=2.0.50

@@ -24,6 +24,51 @@
         header h1 { font-size: 1.8rem; font-weight: 700; color: #fff; margin-bottom: 6px; }
         header p { color: var(--text-dim); font-size: 0.95rem; }
 
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 4px;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 4px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text-dim);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .tab-btn:hover { background: rgba(255,255,255,0.05); color: #fff; }
+        .tab-btn.active { background: var(--accent); color: #fff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* BG Remove */
+        .bg-workspace { display: none; flex-direction: column; gap: 20px; align-items: center; }
+        .bg-workspace.active { display: flex; }
+        .bg-preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 900px; }
+        @media (max-width: 700px) { .bg-preview-grid { grid-template-columns: 1fr; } }
+        .bg-preview-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .bg-preview-card h4 { padding: 12px 16px 8px; font-size: 0.9rem; color: var(--text-dim); font-weight: 500; }
+        .bg-preview-card img, .bg-preview-card video { width: 100%; display: block; }
+        .checkerboard-bg { background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0px; }
+        .bg-options { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+        .radio-card { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+        .radio-card:hover { border-color: var(--accent); }
+        .radio-card input[type="radio"] { accent-color: var(--accent); }
+        .radio-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.1); }
+
         .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
         
         /* Upload Area */
@@ -179,6 +224,15 @@
             <h1 style="font-size: 1.6rem; font-weight: 700;">mp4 watermark remover</h1>
         </header>
 
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('watermark')">✨ 워터마크 제거</button>
+            <button class="tab-btn" onclick="switchTab('bgremove')">🖼️ 배경 제거 (누끼)</button>
+        </div>
+
+        <!-- ============ 워터마크 제거 탭 ============ -->
+        <div class="tab-content active" id="tab-watermark">
+
         <!-- Upload Box -->
         <div class="card" id="upload-card">
             <div class="upload-box" id="drop-zone" onclick="document.getElementById('file-input').click()">
@@ -252,6 +306,56 @@
                 </div>
             </div>
         </div>
+        </div><!-- end tab-watermark -->
+
+        <!-- ============ 배경 제거 탭 ============ -->
+        <div class="tab-content" id="tab-bgremove">
+
+        <!-- BG Upload Box -->
+        <div class="card" id="bg-upload-card">
+            <div class="upload-box" id="bg-drop-zone" onclick="document.getElementById('bg-file-input').click()">
+                <div class="upload-icon">🖼️</div>
+                <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff; margin-bottom: 6px;">배경을 제거할 영상을 업로드하세요</h3>
+                <p class="info-text">영상을 드래그하거나 클릭하여 선택 · MP4, MOV, WebM</p>
+                <input type="file" id="bg-file-input" accept="video/*">
+            </div>
+        </div>
+
+        <!-- BG Workspace (after upload) -->
+        <div class="bg-workspace" id="bg-workspace">
+            <div class="bg-preview-grid">
+                <div class="bg-preview-card">
+                    <h4>📷 원본 (첫 프레임)</h4>
+                    <img id="bg-original-img" src="" alt="original">
+                </div>
+                <div class="bg-preview-card">
+                    <h4>✂️ 배경 제거 미리보기</h4>
+                    <div class="checkerboard-bg">
+                        <img id="bg-preview-img" src="" alt="preview" style="display: block;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="width: 100%; max-width: 900px;">
+                <div class="sidebar-title" style="margin-bottom: 12px;">출력 방식</div>
+                <div class="bg-options">
+                    <label class="radio-card selected" id="opt-green">
+                        <input type="radio" name="bg-mode" value="green" checked onchange="selectBgMode(this)">
+                        <span>🟢 크로마키 (초록 배경 MP4)</span>
+                    </label>
+                    <label class="radio-card" id="opt-transparent">
+                        <input type="radio" name="bg-mode" value="transparent" onchange="selectBgMode(this)">
+                        <span>🔲 투명 배경 (WebM)</span>
+                    </label>
+                </div>
+                <button class="btn" style="margin-top: 16px;" id="bg-start-btn" onclick="startBgRemoval()">
+                    배경 제거 시작
+                </button>
+            </div>
+        </div>
+
+        </div><!-- end tab-bgremove -->
+
     </div>
 
     <script>
@@ -687,6 +791,173 @@
             setTimeout(() => {
                 startBtn.textContent = originalText;
                 startBtn.style.background = '';
+            }, 3500);
+        }
+
+        // ──────────────────────────────────────
+        // 탭 전환
+        // ──────────────────────────────────────
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            if (tab === 'watermark') {
+                document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+                document.getElementById('tab-watermark').classList.add('active');
+            } else {
+                document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+                document.getElementById('tab-bgremove').classList.add('active');
+            }
+        }
+
+        // ──────────────────────────────────────
+        // 배경 제거 (Background Removal)
+        // ──────────────────────────────────────
+        let bgVideoFile = null;
+
+        const bgFileInput = document.getElementById('bg-file-input');
+        const bgDropZone = document.getElementById('bg-drop-zone');
+
+        bgFileInput.onchange = (e) => {
+            if (e.target.files.length > 0) handleBgFile(e.target.files[0]);
+        };
+
+        bgDropZone.addEventListener('dragover', (e) => { e.preventDefault(); bgDropZone.classList.add('dragover'); });
+        bgDropZone.addEventListener('dragleave', () => bgDropZone.classList.remove('dragover'));
+        bgDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            bgDropZone.classList.remove('dragover');
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleBgFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        function handleBgFile(file) {
+            if (!file) return;
+            const isVideo = (file.type && file.type.startsWith('video/')) || file.name.match(/\.(mp4|mov|avi|mkv|webm|m4v)$/i);
+            if (!isVideo) return alert('영상 파일을 업로드해주세요.');
+
+            bgVideoFile = file;
+
+            // 업로드 진행 표시
+            bgDropZone.innerHTML = '<div class="upload-icon">⏳</div><h3 style="font-size: 1.15rem; font-weight: 600; color: #fff;">AI가 배경을 분석하는 중...</h3>';
+
+            const formData = new FormData();
+            formData.append('video', file);
+
+            fetch('/api/bg-upload', { method: 'POST', body: formData })
+                .then(r => {
+                    if (!r.ok) throw new Error('Server error ' + r.status);
+                    return r.json();
+                })
+                .then(data => {
+                    if (data.error) return alert(data.error);
+
+                    document.getElementById('bg-original-img').src = data.frame_url + '?t=' + Date.now();
+                    document.getElementById('bg-preview-img').src = data.preview_url + '?t=' + Date.now();
+
+                    document.getElementById('bg-upload-card').style.display = 'none';
+                    document.getElementById('bg-workspace').classList.add('active');
+                })
+                .catch(err => {
+                    alert('업로드 실패: ' + err);
+                    resetBgUploadBox();
+                });
+        }
+
+        function resetBgUploadBox() {
+            bgDropZone.innerHTML = `
+                <div class="upload-icon">🖼️</div>
+                <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff; margin-bottom: 6px;">배경을 제거할 영상을 업로드하세요</h3>
+                <p class="info-text">영상을 드래그하거나 클릭하여 선택 · MP4, MOV, WebM</p>
+                <input type="file" id="bg-file-input" accept="video/*">
+            `;
+            document.getElementById('bg-file-input').onchange = (e) => {
+                if (e.target.files.length > 0) handleBgFile(e.target.files[0]);
+            };
+        }
+
+        function selectBgMode(radio) {
+            document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
+            radio.closest('.radio-card').classList.add('selected');
+        }
+
+        function startBgRemoval() {
+            const mode = document.querySelector('input[name="bg-mode"]:checked').value;
+            const btn = document.getElementById('bg-start-btn');
+            btn.disabled = true;
+
+            // 프로그레스 모달 활성화
+            const modal = document.getElementById('progress-modal');
+            document.getElementById('progress-fill').style.width = '0%';
+            document.getElementById('progress-percent').textContent = '0%';
+            document.getElementById('progress-status').textContent = 'AI 배경 제거 중...';
+            modal.classList.add('active');
+
+            fetch('/api/bg-process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ output_mode: mode })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    modal.classList.remove('active');
+                    btn.disabled = false;
+                    return;
+                }
+                pollBgProgress(data.task_id);
+            })
+            .catch(err => {
+                alert('처리 요청 실패: ' + err);
+                modal.classList.remove('active');
+                btn.disabled = false;
+            });
+        }
+
+        function pollBgProgress(taskId) {
+            const interval = setInterval(() => {
+                fetch(`/api/progress/${taskId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const percent = Math.round(data.progress * 100);
+                        document.getElementById('progress-fill').style.width = percent + '%';
+                        document.getElementById('progress-percent').textContent = percent + '%';
+                        document.getElementById('progress-status').textContent = data.status || 'AI 배경 제거 중...';
+
+                        if (data.done) {
+                            clearInterval(interval);
+                            document.getElementById('progress-modal').classList.remove('active');
+                            showBgResult(data.result_url, data.result_filename);
+                        }
+                    });
+            }, 500);
+        }
+
+        function showBgResult(resultUrl, filename) {
+            let downloadName = filename || 'bg_removed.mp4';
+            if (bgVideoFile && bgVideoFile.name) {
+                const lastDot = bgVideoFile.name.lastIndexOf('.');
+                const baseName = lastDot !== -1 ? bgVideoFile.name.substring(0, lastDot) : bgVideoFile.name;
+                const ext = filename && filename.endsWith('.webm') ? '.webm' : '.mp4';
+                downloadName = `${baseName}_no_bg${ext}`;
+            }
+
+            const autoLink = document.createElement('a');
+            autoLink.href = resultUrl;
+            autoLink.download = downloadName;
+            document.body.appendChild(autoLink);
+            autoLink.click();
+            document.body.removeChild(autoLink);
+
+            const btn = document.getElementById('bg-start-btn');
+            btn.disabled = false;
+            btn.textContent = '완료! (다운로드됨)';
+            btn.style.background = '#10b981';
+            setTimeout(() => {
+                btn.textContent = '배경 제거 시작';
+                btn.style.background = '';
             }, 3500);
         }
     </script>
