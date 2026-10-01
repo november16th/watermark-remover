@@ -31,7 +31,7 @@ from remove_watermark import (
     merge_audio_ffmpeg,
 )
 
-app = FastAPI(title="AI Video Watermark Remover")
+app = FastAPI(title="Video Edit Editor")
 
 app.add_middleware(
     CORSMiddleware,
@@ -462,6 +462,6 @@ async def bg_process(req: BgRemoveRequest):
 
 
 if __name__ == "__main__":
-    print("✨ AI 영상 워터마크 정밀 제거 웹 서버 시작 중...")
-    print("👉 브라우저 주소: http://127.0.0.1:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    print("✨ Video Edit Editor 웹 서버 시작 중...")
+    print("👉 브라우저 주소: http://127.0.0.1:8001")
+    uvicorn.run(app, host="127.0.0.1", port=8001)
