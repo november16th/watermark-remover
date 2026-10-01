@@ -5,6 +5,7 @@ FastAPI 기반 고품질 AI 영상 워터마크 정밀 제거 웹 서버
 
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import uuid
@@ -287,8 +288,8 @@ async def get_file(session_id: str, filename: str):
 # ──────────────────────────────────────────────
 
 class BgRemoveRequest(BaseModel):
-    output_mode: str = "green"  # 'green' (크로마키) 또는 'transparent' (WebM alpha)
-    quality: str = "fast"       # 'fast' (초고속 u2netp) 또는 'quality' (고정밀 isnet)
+    output_mode: str = "white"        # 'white' (순백색 MP4, 추천), 'transparent' (WebM alpha), 'green' (크로마키 MP4)
+    quality: str = "fast"             # 'fast' (초고속 u2netp) 또는 'quality' (고정밀 isnet)
 
 
 @app.post("/api/bg-upload")
@@ -331,109 +332,122 @@ async def bg_upload(video: UploadFile = File(...)):
     }
 
 
-def run_bg_remove_task(task_id, session_id, output_mode="green", quality="fast"):
+def run_bg_remove_task(task_id, session_id, output_mode="white", quality="fast"):
     """
     프레임별 배경 제거 처리 (고속 메모리 파이프라인)
-    - 디스크 I/O 완전 제거: 수백 장의 PNG를 디스크에 쓰고 읽는 병목 제거
-    - 초고속 모델(u2netp) 적용 시 프레임당 약 0.1초 처리 (10배 이상 고속화)
+    - white: 순백색(RGB: 255, 255, 255) 배경의 웹 전용 고화질 MP4
+    - green: 크로마키(초록) 배경의 편집용 MP4
+    - transparent: 알파 채널이 포함된 웹용 투명 WebM
     """
-    sess = sessions[session_id]
-    input_path = sess["input_video"]
-    sess_dir = TEMP_DIR / session_id
+    try:
+        sess = sessions[session_id]
+        input_path = sess["input_video"]
+        sess_dir = TEMP_DIR / session_id
 
-    cap = cv2.VideoCapture(input_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or np.isnan(fps):
-        fps = 30.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap = cv2.VideoCapture(input_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0 or np.isnan(fps):
+            fps = 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    active_session = rembg_sessions.get(quality, rembg_sessions["fast"])
-    from PIL import Image
+        active_session = rembg_sessions.get(quality, rembg_sessions["fast"])
+        from PIL import Image
 
-    if output_mode == "green":
-        # 1. 크로마키(초록 배경) 직접 VideoWriter 스트리밍 (디스크 쓰기 0회)
-        temp_raw = sess_dir / "temp_raw_bg.mp4"
-        output_path = sess_dir / "bg_removed.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
+        if output_mode in ("white", "green"):
+            # 1. 단색 배경(순백색 또는 크로마키) 직접 VideoWriter 스트리밍 (디스크 쓰기 0회)
+            bg_rgb = (255, 255, 255) if output_mode == "white" else (0, 177, 64)
+            bg_rgba = (*bg_rgb, 255)
 
-        idx = 0
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+            temp_raw = sess_dir / "temp_raw_bg.mp4"
+            output_path = sess_dir / "bg_removed.mp4"
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
 
-            pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            pil_removed = rembg_remove(pil_frame, session=active_session)  # RGBA
+            idx = 0
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # 초록 배경과 알파 합성
-            bg = Image.new("RGBA", pil_removed.size, (0, 177, 64, 255))
-            composited = Image.alpha_composite(bg, pil_removed)
-            out_frame = cv2.cvtColor(np.array(composited.convert("RGB")), cv2.COLOR_RGB2BGR)
-            out.write(out_frame)
+                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                pil_removed = rembg_remove(pil_frame, session=active_session)  # RGBA
 
-            idx += 1
-            tasks[task_id]["progress"] = idx / max(total_frames, 1)
+                # 배경색과 알파 합성
+                bg = Image.new("RGBA", pil_removed.size, bg_rgba)
+                composited = Image.alpha_composite(bg, pil_removed)
+                out_frame = cv2.cvtColor(np.array(composited.convert("RGB")), cv2.COLOR_RGB2BGR)
+                out.write(out_frame)
 
-        cap.release()
-        out.release()
+                idx += 1
+                tasks[task_id]["progress"] = idx / max(total_frames, 1)
 
-        tasks[task_id]["status"] = "오디오 합성 및 최종 인코딩 중..."
-        merge_audio_ffmpeg(str(temp_raw), input_path, str(output_path), crf=18)
-        if temp_raw.exists():
-            temp_raw.unlink()
+            cap.release()
+            out.release()
 
-        tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.mp4"
-        tasks[task_id]["result_filename"] = "bg_removed.mp4"
+            tasks[task_id]["status"] = "오디오 합성 및 최종 인코딩 중..."
+            merge_audio_ffmpeg(str(temp_raw), input_path, str(output_path), crf=18)
+            if temp_raw.exists():
+                temp_raw.unlink()
 
-    else:
-        # 2. 투명 WebM (rawvideo 파이프 직접 스트리밍, 디스크 쓰기 0회)
-        output_path = sess_dir / "bg_removed.webm"
-        ffmpeg_cmd = [
-            "ffmpeg", "-y",
-            "-f", "rawvideo",
-            "-pix_fmt", "rgba",
-            "-s", f"{width}x{height}",
-            "-r", str(fps),
-            "-i", "pipe:0",
-            "-i", input_path,
-            "-c:v", "libvpx-vp9",
-            "-pix_fmt", "yuva420p",
-            "-b:v", "2M",
-            "-map", "0:v", "-map", "1:a?",
-            "-auto-alt-ref", "0",
-            str(output_path)
-        ]
-        proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.mp4"
+            tasks[task_id]["result_filename"] = "bg_white.mp4" if output_mode == "white" else "bg_green.mp4"
 
-        idx = 0
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        else:
+            # 2. 투명 WebM (rawvideo 파이프 직접 스트리밍, 디스크 쓰기 0회)
+            output_path = sess_dir / "bg_removed.webm"
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-f", "rawvideo",
+                "-pix_fmt", "rgba",
+                "-s", f"{width}x{height}",
+                "-r", str(fps),
+                "-i", "pipe:0",
+                "-i", input_path,
+                "-c:v", "libvpx-vp9",
+                "-pix_fmt", "yuva420p",
+                "-b:v", "2M",
+                "-map", "0:v", "-map", "1:a?",
+                "-c:a", "libopus",
+                "-shortest",
+                "-auto-alt-ref", "0",
+                str(output_path)
+            ]
+            proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-            pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            pil_removed = rembg_remove(pil_frame, session=active_session)  # RGBA
+            idx = 0
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # RGBA 바이트 스트림을 ffmpeg stdin으로 바로 전송
-            proc.stdin.write(pil_removed.tobytes())
+                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                pil_removed = rembg_remove(pil_frame, session=active_session)  # RGBA
 
-            idx += 1
-            tasks[task_id]["progress"] = idx / max(total_frames, 1)
+                # RGBA 바이트 스트림을 ffmpeg stdin으로 바로 전송
+                proc.stdin.write(pil_removed.tobytes())
 
-        cap.release()
-        proc.stdin.close()
-        tasks[task_id]["status"] = "WebM 알파 비디오 인코딩 중..."
-        proc.wait()
+                idx += 1
+                tasks[task_id]["progress"] = idx / max(total_frames, 1)
 
-        tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.webm"
-        tasks[task_id]["result_filename"] = "bg_removed.webm"
+            cap.release()
+            proc.stdin.close()
+            tasks[task_id]["status"] = "WebM 알파 비디오 인코딩 중..."
+            proc.wait()
 
-    tasks[task_id]["progress"] = 1.0
-    tasks[task_id]["done"] = True
-    tasks[task_id]["status"] = "완료!"
+            tasks[task_id]["result_url"] = f"/api/files/{session_id}/bg_removed.webm"
+            tasks[task_id]["result_filename"] = "bg_removed.webm"
+
+        tasks[task_id]["progress"] = 1.0
+        tasks[task_id]["done"] = True
+        tasks[task_id]["status"] = "완료!"
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        tasks[task_id]["status"] = f"오류 발생: {str(e)}"
+        tasks[task_id]["error"] = str(e)
+        tasks[task_id]["done"] = True
 
 
 @app.post("/api/bg-process")
