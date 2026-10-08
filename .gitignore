@@ -8,3 +8,5 @@ watermark_preview.png
 .DS_Store
 .venv/
 venv/
+node_modules/
+
