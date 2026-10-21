@@ -1,12 +1,17 @@
 {
   "name": "watermark-remover",
   "version": "1.0.0",
-  "description": "Video Watermark Remover and Background Editor",
+  "description": "AI Video Watermark Remover and Background Editor",
   "scripts": {
+    "postinstall": "./setup_env.sh",
     "dev": "./run.sh",
     "start": "./run.sh"
   },
-  "keywords": [],
+  "keywords": [
+    "watermark-remover",
+    "lama-inpainting",
+    "video-editor"
+  ],
   "author": "",
   "license": "ISC"
 }

@@ -8,22 +8,71 @@ Gemini AI 등 생성형 AI로 제작된 영상의 워터마크(✦ 스파클 다
 
 ---
 
+## ⚡ 3초 빠른 시작 (클론 후 바로 실행)
+
+복잡한 Python 환경 설정이나 `pip install`을 직접 입력할 필요가 없습니다. **`npm` 명령어 2줄로 끝납니다.**
+
+```bash
+git clone https://github.com/november16th/watermark-remover.git
+cd watermark-remover
+
+# 1. 자동 설치 (독립 Python 가상환경 및 AI 패키지 자동 세팅)
+npm install
+
+# 2. 서버 실행 (웹 UI 시작 & 브라우저 자동 오픈)
+npm run dev
+```
+
+> [!TIP]
+> **pip나 Python 가상환경 명령어를 직접 칠 필요가 없습니다!**  
+> `npm install` 실행 시 백그라운드에서 프로젝트 전용 독립 가상환경(`.venv`)을 자동 생성하고, 필요한 AI 모델 및 영상처리 패키지(`LaMa Inpainting`, `OpenCV`, `rembg`, `FastAPI` 등)를 알아서 완벽히 구축합니다.  
+> 설치 완료 후 `npm run dev`만 입력하면 `http://localhost:8001` 화면이 브라우저에 즉시 열립니다.
+
+---
+
 ## 📑 목차
-1. [🌟 주요 특징](#-주요-특징)
-2. [💻 시스템 요구 사항 및 설치](#-시스템-요구-사항-및-설치)
-3. [🚀 소스코드 상세 사용법](#-소스코드-상세-사용법)
+1. [⚡ 3초 빠른 시작 (npm 권장)](#-3초-빠른-시작-클론-후-바로-실행)
+2. [❓ 자주 묻는 질문 (FAQ & 기술 배경)](#-자주-묻는-질문-faq--기술-배경)
+   - [Q1. 이 프로젝트, 파이썬 툴을 쓰고 있는 게 맞나요?](#q1-이-프로젝트-파이썬python-툴을-쓰고-있는-게-맞나요)
+   - [Q2. 왜 Node.js만으로는 안 되고, Python/pip가 꼭 필요한가요?](#q2-왜-nodejs만으로는-안-되고-python이-꼭-필요한가요)
+   - [Q3. 그런데 어떻게 npm install 하나로 바로 설치가 되나요?](#q3-그런데-어떻게-npm-install과-npm-run-dev만으로-실행할-수-있나요)
+3. [🌟 주요 특징](#-주요-특징)
+4. [💻 시스템 요구 사항](#-시스템-요구-사항)
+5. [📦 설치 및 실행 방법](#-설치-및-실행-방법)
+   - [방법 A. npm 원클릭 설치 및 실행 (추천)](#방법-a-npm으로-원클릭-설치-및-실행-가장-추천-)
+   - [방법 B. Python 환경 직접 수동 구성](#방법-b-python-환경-직접-수동-구성-선택-사항)
+6. [🚀 소스코드 상세 사용법](#-소스코드-상세-사용법)
    - [방법 1. 웹 브라우저 UI로 사용하기 (추천)](#방법-1-웹-브라우저-ui로-사용하기-추천-)
    - [방법 2. 터미널 CLI로 사용하기](#방법-2-터미널-cli로-사용하기)
    - [방법 3. 파이썬 스크립트에서 직접 모듈로 호출하기](#방법-3-파이썬-스크립트에서-직접-모듈로-호출하기)
-4. [🔬 전체 동작 파이프라인 (How It Works)](#-전체-동작-파이프라인-how-it-works)
-5. [🧠 핵심 라이브러리 및 동작 원리 (Libraries & Principles)](#-핵심-라이브러리-및-동작-원리-libraries--principles)
-   - [1. LaMa AI (Large Mask Inpainting via Fast Fourier Convolutions)](#1-lama-ai-large-mask-inpainting-via-fast-fourier-convolutions)
-   - [2. OpenCV 영상 처리 및 정밀 형태 마스킹 (Shape Masking)](#2-opencv-영상-처리-및-정밀-형태-마스킹-shape-masking)
-   - [3. 시간축 스무딩 알고리즘 (Temporal Exponential Moving Average)](#3-시간축-스무딩-알고리즘-temporal-exponential-moving-average)
-   - [4. 알파 페더링 블렌딩 (Gaussian Feathering)](#4-알파-페더링-블렌딩-gaussian-feathering)
-   - [5. FFmpeg 무손실 오디오 패스스루 & 최적화 인코딩](#5-ffmpeg-무손실-오디오-패스스루--최적화-인코딩)
-   - [6. FastAPI & HTML5 Canvas 웹 아키텍처](#6-fastapi--html5-canvas-웹-아키텍처)
-6. [📂 프로젝트 디렉토리 구조](#-프로젝트-디렉토리-구조)
+7. [🔬 전체 동작 파이프라인 (How It Works)](#-전체-동작-파이프라인-how-it-works)
+8. [🧠 핵심 라이브러리 및 동작 원리 (Libraries & Principles)](#-핵심-라이브러리-및-동작-원리-libraries--principles)
+9. [📂 프로젝트 디렉토리 구조](#-프로젝트-디렉토리-구조)
+
+---
+
+## ❓ 자주 묻는 질문 (FAQ & 기술 배경)
+
+### Q1. 이 프로젝트, 파이썬(Python) 툴을 쓰고 있는 게 맞나요?
+**네, 맞습니다. 내부 핵심 엔진은 100% Python 기반의 AI 영상처리 스택입니다.**
+- 저장소에 `package.json`이 포함되어 있어 겉으로는 평범한 Node.js 웹 앱처럼 보이지만, 실제 워터마크를 감지하고 딥러닝으로 배경을 복원하는 핵심 로직은 **Python 딥러닝 라이브러리(`PyTorch`, `LaMa Inpainting`, `OpenCV`, `rembg`, `FastAPI`)**로 작성되어 있습니다.
+- 웹 화면(UI)은 브라우저 캔버스 기반(`static/index.html`)이며, Python 백엔드 서버(`web_app.py`)가 로컬에서 영상을 받아 초당 프레임별 복원 작업을 수행합니다.
+
+### Q2. 왜 Node.js만으로는 안 되고, Python이 꼭 필요한가요?
+**워터마크를 흔적 없이 복원하는 '고화질 AI 인페인팅' 딥러닝 생태계가 Python에 구축되어 있기 때문입니다.**
+- 단순한 사각형 모자이크나 흐림(blur) 처리는 JavaScript로도 구현할 수 있습니다. 하지만 워터마크 뒤에 가려져 있던 마룻바닥 무늬, 옷주름, 배경 질감 등을 자연스럽게 추론해 그려 넣으려면 **LaMa(Large Mask Inpainting via Fast Fourier Convolutions)** 같은 최신 딥러닝 신경망 모델이 필수적입니다.
+- 이러한 대규모 인공지능 모델과 정밀 영상 프레임 제어 엔진(`PyTorch`, `OpenCV`, `Torchvision`, `ONNX Runtime`)은 현재 Python 환경을 중심으로 개발되고 있습니다.
+- 만약 Node.js만 쓰려면 Replicate나 Runway 같은 외부 유료 클라우드 AI API를 매번 호출해야 하므로 요금이 발생합니다. **내 PC에서 무료로 무제한 고화질 복원**을 수행하려면 로컬 Python AI 엔진이 반드시 필요합니다.
+
+### Q3. 그런데 어떻게 `npm install`과 `npm run dev`만으로 실행할 수 있나요?
+**사용자가 번거로운 파이썬 환경을 직접 신경 쓰지 않아도 되도록, npm 생명주기에 자동화 스크립트를 연결해 두었기 때문입니다.**
+- **`npm install` 실행 시 (`postinstall` 자동화)**:
+  1. 시스템에 설치된 Python(3.10 ~ 3.13)을 자동으로 감지합니다.
+  2. 프로젝트 내부에 완전히 독립된 가상환경(`.venv`)을 자동 생성합니다.
+  3. `requirements.txt`에 명시된 AI 라이브러리들을 백그라운드에서 `pip install`로 알아서 다운로드하고 세팅합니다.
+- **`npm run dev` 실행 시**:
+  - 방금 구축된 `.venv` 가상환경의 Python으로 FastAPI 웹 서버를 구동하고, 1.5초 후 브라우저(`http://localhost:8001`)를 자동으로 띄웁니다.
+- 결과적으로 사용자는 **Python 가상환경 생성 명령어(`python -m venv`)나 `pip install` 명령어를 단 한 줄도 직접 칠 필요 없이**, 평소 프론트엔드 개발하듯이 **`git clone` $\rightarrow$ `npm install` $\rightarrow$ `npm run dev`** 만으로 완벽하게 도구를 구동할 수 있습니다.
 
 ---
 
@@ -64,33 +113,58 @@ Gemini AI 등 생성형 AI로 제작된 영상의 워터마크(✦ 스파클 다
 
 ---
 
-## 📦 패키지 설치 방법
+## 📦 설치 및 실행 방법
 
-### 1. 저장소 복제 (Git Clone)
+### 방법 A. npm으로 원클릭 설치 및 실행 (가장 추천 👍)
+
+Python 명령어나 가상환경 설정을 직접 다룰 필요 없이, 프론트엔드 프로젝트처럼 **단 두 줄의 명령어**로 완벽하게 자동 구축됩니다.
+
 ```bash
+# 1. 저장소 복제 및 이동
 git clone https://github.com/november16th/watermark-remover.git
 cd watermark-remover
+
+# 2. 필수 AI 환경 자동 구축 (독립 .venv 생성 및 패키지 자동 설치)
+npm install
+
+# 3. 앱 실행 (FastAPI 서버 가동 & 웹 브라우저 자동 실행)
+npm run dev
 ```
 
-### 2. 파이썬 가상환경 생성 (권장)
+> **내부 동작 원리:**  
+> `npm install` 실행 시 시스템 내 Python(3.10~3.13)을 자동 탐색하여 프로젝트 내부에 격리된 가상환경(`.venv`)을 만들고, `requirements.txt`의 모든 AI 딥러닝 패키지(`PyTorch`, `LaMa Inpainting`, `OpenCV`, `rembg` 등)를 알아서 다운로드 및 설치합니다.
+
+---
+
+### 방법 B. Python 환경 직접 수동 구성 (선택 사항)
+
+npm을 사용하지 않고 직접 Python 가상환경을 관리하고 싶을 경우 사용하는 방법입니다.
+
 ```bash
-# conda 사용 시
+# 1. 저장소 복제 및 이동
+git clone https://github.com/november16th/watermark-remover.git
+cd watermark-remover
+
+# 2. 파이썬 가상환경 생성 (conda 또는 venv 중 택 1)
+# 2-A. conda 사용 시
 conda create -n watermark python=3.10 -y
 conda activate watermark
 
-# 또는 venv 사용 시
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-```
+# 2-B. 또는 venv 사용 시
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-### 3. 의존성 라이브러리 설치
-```bash
+# 3. 의존성 라이브러리 설치
 pip install -r requirements.txt
+
+# 4. 서버 실행
+python web_app.py
 ```
 
 > **설치되는 핵심 패키지:**
 > - `torch`, `torchvision`: 딥러닝 텐서 연산 및 신경망 엔진
 > - `simple-lama-inpainting`: LaMa (Large Mask Inpainting) 사전학습 모델 구동기
+> - `rembg`: U2Net 기반 초고속/고정밀 AI 배경 분리(누끼) 엔진
 > - `opencv-python`, `numpy`, `Pillow`: 컴퓨터 비전 및 이미지 행렬 연산
 > - `fastapi`, `uvicorn`, `python-multipart`: 고성능 비동기 웹 프레임워크 및 서버
 > - `tqdm`: 터미널 작업 진행률 표시바

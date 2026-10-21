@@ -1,4 +1,4 @@
-#!/opt/anaconda3/bin/python3
+#!/usr/bin/env python3
 """
 FastAPI 기반 고품질 AI 영상 워터마크 정밀 제거 웹 서버
 """

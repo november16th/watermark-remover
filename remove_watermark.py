@@ -1,4 +1,4 @@
-#!/opt/anaconda3/bin/python3
+#!/usr/bin/env python3
 """
 고품질 영상 워터마크 제거 도구
 ================================

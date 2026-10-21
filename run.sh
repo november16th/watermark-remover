@@ -4,43 +4,34 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-# 1. 사용할 Python 인터프리터 자동 탐색
-CANDIDATES=(
-  "/opt/anaconda3/bin/python3"
-  "/opt/anaconda3/bin/python"
-  "$HOME/opt/anaconda3/bin/python3"
-  "$HOME/anaconda3/bin/python3"
-  "$HOME/miniconda3/bin/python3"
-  "./venv/bin/python3"
-  "./.venv/bin/python3"
-  "$(which python3 2>/dev/null)"
-  "$(which python 2>/dev/null)"
-)
+VENV_PYTHON="$DIR/.venv/bin/python"
 
-PYTHON_BIN=""
+# 1. 가상환경 및 패키지 검증 (없으면 자동으로 setup_env.sh 실행)
+if [ ! -x "$VENV_PYTHON" ] || ! "$VENV_PYTHON" -c "import fastapi, uvicorn" 2>/dev/null; then
+  echo "⚙️ 실행 환경이 준비되지 않았습니다. 환경 자동 설정을 시작합니다..."
+  ./setup_env.sh
+fi
 
-for cand in "${CANDIDATES[@]}"; do
-  if [ -n "$cand" ] && [ -x "$cand" ]; then
-    if "$cand" -c "import fastapi, uvicorn" 2>/dev/null; then
+PYTHON_BIN="$VENV_PYTHON"
+
+# 만약 여전히 .venv가 없으면 시스템 인터프리터 탐색 fallback
+if [ ! -x "$PYTHON_BIN" ]; then
+  CANDIDATES=(
+    "./venv/bin/python"
+    "/opt/anaconda3/bin/python3"
+    "$(which python3 2>/dev/null)"
+  )
+  for cand in "${CANDIDATES[@]}"; do
+    if [ -n "$cand" ] && [ -x "$cand" ] && "$cand" -c "import fastapi, uvicorn" 2>/dev/null; then
       PYTHON_BIN="$cand"
       break
     fi
-  fi
-done
-
-if [ -z "$PYTHON_BIN" ]; then
-  if command -v conda &>/dev/null; then
-    if conda run -n base python -c "import fastapi, uvicorn" 2>/dev/null; then
-      PYTHON_BIN="conda run --no-capture-output -n base python"
-    elif conda run -n watermark python -c "import fastapi, uvicorn" 2>/dev/null; then
-      PYTHON_BIN="conda run --no-capture-output -n watermark python"
-    fi
-  fi
+  done
 fi
 
-if [ -z "$PYTHON_BIN" ]; then
-  echo "❌ 필요한 패키지(fastapi, uvicorn 등)가 설치된 Python 환경을 찾을 수 없습니다."
-  echo "   requirements.txt 패키지 설치 또는 가상환경을 확인해 주세요."
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "❌ 서버를 실행할 수 있는 Python 환경을 찾지 못했습니다."
+  echo "   'npm install'을 실행하여 환경을 먼저 구축해 주세요."
   exit 1
 fi
 
@@ -55,7 +46,7 @@ if [ -n "$EXISTING_PID" ]; then
   sleep 1
 fi
 
-# 3. 1.5초 후 브라우저 자동 오픈
+# 3. 브라우저 자동 오픈
 (sleep 1.5 && {
   if command -v open &>/dev/null; then
     open "http://127.0.0.1:$PORT"
@@ -65,8 +56,5 @@ fi
 } 2>/dev/null) &
 
 # 4. 서버 실행
-if [[ "$PYTHON_BIN" == conda\ run* ]]; then
-  eval exec "$PYTHON_BIN web_app.py"
-else
-  exec "$PYTHON_BIN" web_app.py
-fi
+echo "🚀 워터마크 제거 웹 서버를 시작합니다 (http://127.0.0.1:$PORT)..."
+exec "$PYTHON_BIN" web_app.py
