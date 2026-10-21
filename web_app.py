@@ -56,11 +56,16 @@ tasks = {}
 # 단일 Lama Inpainter 인스턴스 (메모리 절약)
 inpainter = LamaInpainter()
 
-# rembg 모델 세션 (fast: 초고속 u2netp ~0.1s/frame, quality: 고정밀 isnet)
-rembg_sessions = {
-    "fast": rembg_new_session("u2netp"),
-    "quality": rembg_new_session("isnet-general-use"),
-}
+# rembg 모델 세션 (지연 로딩: 사용 시점에 로드하여 서버 즉각 기동)
+_rembg_sessions = {}
+
+
+def get_rembg_session(model_name: str = "fast"):
+    actual_model = "u2netp" if model_name == "fast" else "isnet-general-use"
+    if actual_model not in _rembg_sessions:
+        print(f"📥 rembg AI 모델({actual_model}) 로드 중...")
+        _rembg_sessions[actual_model] = rembg_new_session(actual_model)
+    return _rembg_sessions[actual_model]
 
 
 class BoxModel(BaseModel):
@@ -316,7 +321,7 @@ async def bg_upload(video: UploadFile = File(...)):
     # rembg로 첫 프레임 배경 제거 미리보기 생성 (초고속 모델 사용)
     from PIL import Image
     pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    pil_removed = rembg_remove(pil_frame, session=rembg_sessions["fast"])
+    pil_removed = rembg_remove(pil_frame, session=get_rembg_session("fast"))
     preview_path = sess_path / "preview_nobg.png"
     pil_removed.save(str(preview_path))
 
@@ -352,7 +357,7 @@ def run_bg_remove_task(task_id, session_id, output_mode="white", quality="fast")
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        active_session = rembg_sessions.get(quality, rembg_sessions["fast"])
+        active_session = get_rembg_session(quality)
         from PIL import Image
 
         if output_mode in ("white", "green"):
@@ -477,5 +482,5 @@ async def bg_process(req: BgRemoveRequest):
 
 if __name__ == "__main__":
     print("✨ Video Edit Editor 웹 서버 시작 중...")
-    print("👉 브라우저 주소: http://127.0.0.1:8001")
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    print("👉 브라우저 주소: http://127.0.0.1:8888")
+    uvicorn.run(app, host="127.0.0.1", port=8888)

@@ -37,8 +37,8 @@ fi
 
 echo "✨ Python 인터프리터: $PYTHON_BIN"
 
-# 2. 포트 8001 기존 프로세스 정리 (포트 충돌 방지)
-PORT=8001
+# 2. 포트 8888 기존 프로세스 정리 (포트 충돌 방지)
+PORT=8888
 EXISTING_PID=$(lsof -ti :$PORT 2>/dev/null)
 if [ -n "$EXISTING_PID" ]; then
   echo "🔄 포트 $PORT 를 점유 중인 기존 프로세스(PID: $EXISTING_PID)를 종료합니다..."
@@ -46,14 +46,20 @@ if [ -n "$EXISTING_PID" ]; then
   sleep 1
 fi
 
-# 3. 브라우저 자동 오픈
-(sleep 1.5 && {
-  if command -v open &>/dev/null; then
-    open "http://127.0.0.1:$PORT"
-  elif command -v xdg-open &>/dev/null; then
-    xdg-open "http://127.0.0.1:$PORT"
-  fi
-} 2>/dev/null) &
+# 3. 서버가 실제로 포트를 열고 응답할 때까지 대기 후 브라우저 오픈
+(
+  for i in {1..30}; do
+    if curl -s -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
+      if command -v open &>/dev/null; then
+        open "http://127.0.0.1:$PORT"
+      elif command -v xdg-open &>/dev/null; then
+        xdg-open "http://127.0.0.1:$PORT"
+      fi
+      break
+    fi
+    sleep 0.5
+  done
+) &
 
 # 4. 서버 실행
 echo "🚀 워터마크 제거 웹 서버를 시작합니다 (http://127.0.0.1:$PORT)..."

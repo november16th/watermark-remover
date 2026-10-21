@@ -26,7 +26,7 @@ npm run dev
 > [!TIP]
 > **pip나 Python 가상환경 명령어를 직접 칠 필요가 없습니다!**  
 > `npm install` 실행 시 백그라운드에서 프로젝트 전용 독립 가상환경(`.venv`)을 자동 생성하고, 필요한 AI 모델 및 영상처리 패키지(`LaMa Inpainting`, `OpenCV`, `rembg`, `FastAPI` 등)를 알아서 완벽히 구축합니다.  
-> 설치 완료 후 `npm run dev`만 입력하면 `http://localhost:8001` 화면이 브라우저에 즉시 열립니다.
+> 설치 완료 후 `npm run dev`만 입력하면 `http://localhost:8888` 화면이 브라우저에 즉시 열립니다.
 
 ---
 
@@ -71,7 +71,7 @@ npm run dev
   2. 프로젝트 내부에 완전히 독립된 가상환경(`.venv`)을 자동 생성합니다.
   3. `requirements.txt`에 명시된 AI 라이브러리들을 백그라운드에서 `pip install`로 알아서 다운로드하고 세팅합니다.
 - **`npm run dev` 실행 시**:
-  - 방금 구축된 `.venv` 가상환경의 Python으로 FastAPI 웹 서버를 구동하고, 1.5초 후 브라우저(`http://localhost:8001`)를 자동으로 띄웁니다.
+  - 방금 구축된 `.venv` 가상환경의 Python으로 FastAPI 웹 서버를 구동하고, 1.5초 후 브라우저(`http://localhost:8888`)를 자동으로 띄웁니다.
 - 결과적으로 사용자는 **Python 가상환경 생성 명령어(`python -m venv`)나 `pip install` 명령어를 단 한 줄도 직접 칠 필요 없이**, 평소 프론트엔드 개발하듯이 **`git clone` $\rightarrow$ `npm install` $\rightarrow$ `npm run dev`** 만으로 완벽하게 도구를 구동할 수 있습니다.
 
 ---
@@ -186,10 +186,10 @@ python web_app.py
    python web_app.py
    # /opt/anaconda3/bin/python3 web_app.py
    ```
-   *서버가 기동되면 콘솔에 `INFO: Uvicorn running on http://127.0.0.1:8001` 문구가 출력되며 브라우저가 자동 실행됩니다.*
+   *서버가 기동되면 콘솔에 `INFO: Uvicorn running on http://127.0.0.1:8888` 문구가 출력되며 브라우저가 자동 실행됩니다.*
 
 2. **브라우저 접속**:
-   👉 **[http://127.0.0.1:8001](http://127.0.0.1:8001)**
+   👉 **[http://127.0.0.1:8888](http://127.0.0.1:8888)**
 
 3. **작업 순서**:
    1. **동영상 업로드**: 화면 중앙 점선 상자에 MP4/MOV/WebM 영상을 **드래그 앤 드롭**하거나 클릭하여 선택합니다.
