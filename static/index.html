@@ -225,8 +225,9 @@
 
         <!-- Tab Navigation -->
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('watermark')">✨ 워터마크 제거</button>
-            <button class="tab-btn" onclick="switchTab('bgremove')">🖼️ 배경 제거 (누끼)</button>
+            <button class="tab-btn active" onclick="switchTab('watermark')">🎬 영상 워터마크</button>
+            <button class="tab-btn" onclick="switchTab('imgbatch')">🖼️ 이미지 워터마크 일괄 제거 (고속 Batch)</button>
+            <button class="tab-btn" onclick="switchTab('bgremove')">✂️ 영상 배경 제거</button>
         </div>
 
         <!-- ============ 워터마크 제거 탭 ============ -->
@@ -306,6 +307,120 @@
             </div>
         </div>
         </div><!-- end tab-watermark -->
+
+        <!-- ============ 이미지 워터마크 일괄 제거 탭 ============ -->
+        <div class="tab-content" id="tab-imgbatch">
+            <!-- 100% 원본 보존 보장 배너 -->
+            <div style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; font-size: 0.92rem; line-height: 1.6; color: #bfdbfe;">
+                🛡️ <strong>100% 원본 무손실 보존:</strong> 워터마크 영역 외의 배경은 1픽셀도 건드리지 않으며, <strong>원본 해상도(가로x세로)</strong>, <strong>이미지 포맷(JPG/PNG/WebP)</strong>, <strong>최고 화질(Quality 98+)</strong>을 1:1 완벽하게 유지합니다.
+            </div>
+
+            <!-- 폴더 경로 입력 카드 -->
+            <div class="card" id="img-folder-card">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <h3 style="font-size: 1.15rem; font-weight: 600; color: #fff;">📁 이미지 원본 폴더 선택</h3>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="img-folder-input" placeholder="폴더 경로를 입력하세요 (비어있는 상태로 불러오기를 누르면 Finder가 열립니다)" style="flex: 1; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 12px 14px; border-radius: 8px; font-size: 0.95rem; font-family: monospace;">
+                        <button class="btn" id="img-load-btn" style="width: auto; padding: 0 24px; white-space: nowrap;" onclick="loadImgFolder()">
+                            불러오기
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 폴더 정보 미리보기 바 (불러오기 완료 시 노출) -->
+                <div id="img-folder-summary" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 1.2rem;">✨</span>
+                            <span id="img-summary-count" style="font-weight: 600; color: #60a5fa; font-size: 0.95rem;">총 0개 이미지 발견</span>
+                            <span id="img-summary-dim" style="color: var(--text-dim); font-size: 0.85rem;"></span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="font-size: 0.85rem; color: #94a3b8; font-weight: 500;">기준 이미지 선택:</label>
+                            <select id="img-select-dropdown" onchange="changeBaseImage(this.value)" style="background: #1e293b; border: 1px solid #3b82f6; color: #60a5fa; padding: 5px 12px; border-radius: 6px; font-size: 0.88rem; font-weight: 600; outline: none; cursor: pointer;">
+                            </select>
+                        </div>
+                    </div>
+                    <div id="img-sample-chips" style="display: flex; gap: 6px; flex-wrap: wrap; max-height: 96px; overflow-y: auto; padding: 2px;"></div>
+                </div>
+            </div>
+
+            <!-- 이미지 워크스페이스 (캔버스 & 사이드바) -->
+            <div class="workspace" id="img-workspace" style="display: none; margin-top: 20px;">
+                <div class="card" style="padding: 12px;">
+                    <div class="canvas-container">
+                        <canvas id="img-main-canvas"></canvas>
+                    </div>
+                    <p class="info-text" style="text-align: center; margin-top: 8px; line-height: 1.5;">
+                        기준 이미지 위에서 워터마크 영역을 <strong>마우스로 드래그</strong>해 주세요.<br>
+                        선택 후 <strong>키보드 방향키(↑↓←→)</strong>로 1px씩 미세조정할 수 있습니다.
+                    </p>
+                </div>
+
+                <!-- 조작 사이드바 -->
+                <div class="sidebar">
+                    <div class="card">
+                        <div class="sidebar-title">워터마크 마스크 미리보기</div>
+                        <div class="preview-box" style="margin-top: 12px;">
+                            <canvas id="img-mask-canvas" width="120" height="120"></canvas>
+                            <p class="info-text" id="img-mask-status">워터마크 영역을 지정하세요.</p>
+                        </div>
+
+                        <div style="margin-top: 14px;">
+                            <label style="font-size: 0.85rem; color: var(--text-dim);">마스크 여유 크기</label>
+                            <input type="range" id="img-dilate-slider" min="2" max="12" value="4" style="width: 100%; margin-top: 4px;" oninput="onImgDilateChange(this.value)">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-dim);">
+                                <span>2px</span>
+                                <span id="img-dilate-val">4px</span>
+                                <span>12px</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 수동 픽셀 좌표 카드 -->
+                    <div class="card">
+                        <div class="sidebar-title">좌표 설정</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+                            <div>
+                                <label style="font-size: 0.78rem; color: var(--text-dim);">X 위치</label>
+                                <input type="number" id="img-input-x" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onImgManualCoordChange()">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.78rem; color: var(--text-dim);">Y 위치</label>
+                                <input type="number" id="img-input-y" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onImgManualCoordChange()">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.78rem; color: var(--text-dim);">너비 (W)</label>
+                                <input type="number" id="img-input-w" value="70" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onImgManualCoordChange()">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.78rem; color: var(--text-dim);">높이 (H)</label>
+                                <input type="number" id="img-input-h" value="70" style="width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff; padding: 6px; border-radius: 6px; margin-top: 2px;" onchange="onImgManualCoordChange()">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 저장 옵션 및 실행 버튼 -->
+                    <div class="card">
+                        <div class="sidebar-title" style="margin-bottom: 10px;">저장 방식 옵션</div>
+                        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: #fff;">
+                                <input type="radio" name="img-save-mode" value="new_folder" checked style="accent-color: var(--accent);">
+                                <span>새 폴더 생성 (<code>{폴더명}_clean</code> · 안전 추천)</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; color: #94a3b8;">
+                                <input type="radio" name="img-save-mode" value="overwrite" style="accent-color: var(--accent);">
+                                <span>원본 덮어쓰기 (자동으로 <code>_backup</code> 폴더 생성)</span>
+                            </label>
+                        </div>
+
+                        <button class="btn" id="img-start-btn" disabled onclick="startImgBatchProcessing()">
+                            🚀 폴더 내 모든 이미지 일괄 제거 시작
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div><!-- end tab-imgbatch -->
 
         <!-- ============ 배경 제거 탭 ============ -->
         <div class="tab-content" id="tab-bgremove">
@@ -843,10 +958,485 @@
             if (tab === 'watermark') {
                 document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
                 document.getElementById('tab-watermark').classList.add('active');
-            } else {
+            } else if (tab === 'imgbatch') {
                 document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+                document.getElementById('tab-imgbatch').classList.add('active');
+            } else {
+                document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
                 document.getElementById('tab-bgremove').classList.add('active');
             }
+        }
+
+        // ──────────────────────────────────────
+        // 이미지 워터마크 일괄 제거 (Image Batch Processing)
+        // ──────────────────────────────────────
+        let imgOriginalImg = null;
+        let imgSelectedBox = null;
+        let imgScale = 1.0;
+        let imgIsDragging = false;
+        let imgStartX = 0, imgStartY = 0;
+        let imgLoadedFolderPath = "";
+        let imgSessionId = "";
+        let imgCurrentFilename = "";
+        let imgAllFiles = [];
+
+        const imgMainCanvas = document.getElementById('img-main-canvas');
+        const imgCtx = imgMainCanvas.getContext('2d');
+        const imgMaskCanvas = document.getElementById('img-mask-canvas');
+        const imgMaskCtx = imgMaskCanvas.getContext('2d');
+        const imgStartBtn = document.getElementById('img-start-btn');
+
+        function openFinderDialog() {
+            const btn = document.getElementById('img-load-btn');
+            const origText = btn ? btn.textContent : '';
+            if (btn) { btn.textContent = '⏳ Finder 대기 중...'; btn.disabled = true; }
+
+            fetch('/api/system/open-folder-dialog', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.folder_path) {
+                    document.getElementById('img-folder-input').value = data.folder_path;
+                    loadImgFolder(data.folder_path);
+                }
+            })
+            .catch(err => {
+                alert('Finder 열기 실패: ' + err.message);
+            })
+            .finally(() => {
+                if (btn) { btn.textContent = '불러오기'; btn.disabled = false; }
+            });
+        }
+
+        function loadImgFolder(customPath) {
+            const folderInput = document.getElementById('img-folder-input');
+            const path = (customPath || folderInput.value || '').trim();
+            if (!path) {
+                // 경로가 비어있으면 Finder 폴더 선택 창을 즉시 오픈!
+                openFinderDialog();
+                return;
+            }
+
+            imgLoadedFolderPath = path;
+            const btn = document.getElementById('img-load-btn');
+            if (btn) { btn.textContent = '⏳ 불러오는 중...'; btn.disabled = true; }
+
+            fetch('/api/image-batch/load-folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder_path: path })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    alert('폴더 불러오기 실패: ' + data.error);
+                    return;
+                }
+
+                imgSessionId = data.session_id;
+                imgAllFiles = data.all_files || data.sample_files || [];
+                imgCurrentFilename = data.first_image_name;
+
+                // 폴더 정보 요약 바 업데이트
+                document.getElementById('img-folder-summary').style.display = 'block';
+                document.getElementById('img-summary-count').textContent = `총 ${data.count}개 이미지 발견`;
+                document.getElementById('img-summary-dim').textContent = `(해상도: ${data.width} x ${data.height})`;
+
+                // 기준 이미지 선택 드롭다운 & 칩 렌더링
+                renderImageSelector(imgAllFiles, imgCurrentFilename);
+
+                // 첫 이미지 로드
+                const img = new Image();
+                img.onload = () => {
+                    imgOriginalImg = img;
+                    initImgCanvas();
+                    document.getElementById('img-workspace').style.display = 'grid';
+
+                    // 기본 추천 워터마크 박스 (이미지의 우측 하단 기본 배치)
+                    if (!imgSelectedBox) {
+                        const bw = Math.min(80, Math.round(img.width * 0.15));
+                        const bh = Math.min(80, Math.round(img.height * 0.1));
+                        imgSelectedBox = {
+                            x: img.width - bw - 20,
+                            y: img.height - bh - 20,
+                            w: bw,
+                            h: bh
+                        };
+                    }
+                    drawImgMain();
+                    syncImgInputsWithBox();
+                    updateImgMaskPreview();
+                    imgStartBtn.disabled = false;
+                };
+                img.src = data.first_image_url + '?t=' + Date.now();
+            })
+            .catch(err => {
+                alert('네트워크 오류: ' + err.message);
+            })
+            .finally(() => {
+                if (btn) { btn.textContent = '불러오기'; btn.disabled = false; }
+            });
+        }
+
+        function renderImageSelector(files, activeFilename) {
+            // 1. 드롭다운 옵션 렌더링
+            const dropdown = document.getElementById('img-select-dropdown');
+            dropdown.innerHTML = '';
+            files.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = f;
+                if (f === activeFilename) opt.selected = true;
+                dropdown.appendChild(opt);
+            });
+
+            // 2. 칩 목록 렌더링 (클릭 가능한 인터랙티브 버튼)
+            const chipsContainer = document.getElementById('img-sample-chips');
+            chipsContainer.innerHTML = '';
+            files.forEach(f => {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'img-chip-btn';
+                chip.dataset.filename = f;
+                const isActive = (f === activeFilename);
+                chip.style.cssText = `
+                    font-size: 0.8rem;
+                    border: 1px solid ${isActive ? '#3b82f6' : 'var(--border)'};
+                    background: ${isActive ? '#2563eb' : '#1e293b'};
+                    color: ${isActive ? '#ffffff' : 'var(--text-dim)'};
+                    font-weight: ${isActive ? '600' : '400'};
+                    padding: 3px 10px;
+                    border-radius: 6px;
+                    font-family: monospace;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                `;
+                chip.textContent = f;
+                chip.onclick = () => changeBaseImage(f);
+                chipsContainer.appendChild(chip);
+            });
+        }
+
+        function changeBaseImage(filename) {
+            if (!imgSessionId || !filename) return;
+            imgCurrentFilename = filename;
+
+            // 드롭다운 및 칩 UI 동기화
+            const dropdown = document.getElementById('img-select-dropdown');
+            if (dropdown) dropdown.value = filename;
+
+            document.querySelectorAll('.img-chip-btn').forEach(chip => {
+                const isActive = (chip.dataset.filename === filename);
+                chip.style.borderColor = isActive ? '#3b82f6' : 'var(--border)';
+                chip.style.background = isActive ? '#2563eb' : '#1e293b';
+                chip.style.color = isActive ? '#ffffff' : 'var(--text-dim)';
+                chip.style.fontWeight = isActive ? '600' : '400';
+            });
+
+            // 서버에 해당 이미지 로드 요청
+            fetch('/api/image-batch/select-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: imgSessionId, filename: filename })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) return alert(data.error);
+
+                const img = new Image();
+                img.onload = () => {
+                    imgOriginalImg = img;
+                    drawImgMain();
+                    updateImgMaskPreview();
+                };
+                img.src = data.image_url + '?t=' + Date.now();
+            })
+            .catch(err => alert('이미지 변경 오류: ' + err.message));
+        }
+
+        function handleSingleImgUpload(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/image-batch/upload-single', { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) return alert(data.error);
+
+                document.getElementById('img-folder-summary').style.display = 'block';
+                document.getElementById('img-summary-count').textContent = `단일 기준 이미지 업로드됨`;
+                document.getElementById('img-summary-dim').textContent = `(해상도: ${data.width} x ${data.height})`;
+                document.getElementById('img-first-filename').textContent = `기준 파일: ${data.first_image_name}`;
+                document.getElementById('img-sample-chips').innerHTML = '<span style="font-size:0.8rem; color:#94a3b8;">위의 폴더 경로 입력창에 처리할 폴더 경로를 입력하시면 일괄 처리가 가능합니다.</span>';
+
+                const img = new Image();
+                img.onload = () => {
+                    imgOriginalImg = img;
+                    initImgCanvas();
+                    document.getElementById('img-workspace').style.display = 'grid';
+
+                    const bw = Math.min(80, Math.round(img.width * 0.15));
+                    const bh = Math.min(80, Math.round(img.height * 0.1));
+                    imgSelectedBox = {
+                        x: img.width - bw - 20,
+                        y: img.height - bh - 20,
+                        w: bw,
+                        h: bh
+                    };
+                    drawImgMain();
+                    syncImgInputsWithBox();
+                    updateImgMaskPreview();
+                    imgStartBtn.disabled = false;
+                };
+                img.src = data.first_image_url + '?t=' + Date.now();
+            })
+            .catch(err => alert('업로드 오류: ' + err.message));
+        }
+
+        function initImgCanvas() {
+            if (!imgOriginalImg) return;
+            const availableHeight = Math.min(window.innerHeight - 180, 780);
+            const scaleByH = availableHeight / imgOriginalImg.height;
+            const scaleByW = 440 / imgOriginalImg.width;
+            imgScale = Math.min(scaleByH, scaleByW, 1.0);
+
+            imgMainCanvas.width = Math.round(imgOriginalImg.width * imgScale);
+            imgMainCanvas.height = Math.round(imgOriginalImg.height * imgScale);
+            drawImgMain();
+        }
+
+        function drawImgMain() {
+            if (!imgOriginalImg) return;
+            imgCtx.drawImage(imgOriginalImg, 0, 0, imgMainCanvas.width, imgMainCanvas.height);
+            if (imgSelectedBox) {
+                const sx = imgSelectedBox.x * imgScale;
+                const sy = imgSelectedBox.y * imgScale;
+                const sw = imgSelectedBox.w * imgScale;
+                const sh = imgSelectedBox.h * imgScale;
+
+                imgCtx.strokeStyle = '#eab308';
+                imgCtx.lineWidth = 2;
+                imgCtx.strokeRect(sx, sy, sw, sh);
+                imgCtx.fillStyle = 'rgba(234, 179, 8, 0.18)';
+                imgCtx.fillRect(sx, sy, sw, sh);
+
+                imgCtx.font = '12px sans-serif';
+                imgCtx.fillStyle = '#eab308';
+                imgCtx.fillText(`워터마크: (${imgSelectedBox.x}, ${imgSelectedBox.y}) ${imgSelectedBox.w}x${imgSelectedBox.h}`, Math.max(10, sx), Math.max(16, sy - 6));
+            }
+        }
+
+        function syncImgInputsWithBox() {
+            if (!imgSelectedBox) return;
+            document.getElementById('img-input-x').value = imgSelectedBox.x;
+            document.getElementById('img-input-y').value = imgSelectedBox.y;
+            document.getElementById('img-input-w').value = imgSelectedBox.w;
+            document.getElementById('img-input-h').value = imgSelectedBox.h;
+        }
+
+        function onImgManualCoordChange() {
+            const x = parseInt(document.getElementById('img-input-x').value) || 0;
+            const y = parseInt(document.getElementById('img-input-y').value) || 0;
+            const w = parseInt(document.getElementById('img-input-w').value) || 60;
+            const h = parseInt(document.getElementById('img-input-h').value) || 60;
+
+            imgSelectedBox = { x, y, w, h };
+            drawImgMain();
+            updateImgMaskPreview();
+            imgStartBtn.disabled = false;
+        }
+
+        function onImgDilateChange(val) {
+            document.getElementById('img-dilate-val').textContent = val + 'px';
+            updateImgMaskPreview();
+        }
+
+        function updateImgMaskPreview() {
+            if (!imgSelectedBox || !imgOriginalImg) return;
+            imgMaskCtx.clearRect(0, 0, 120, 120);
+
+            // 임시 캔버스에 박스 영역 크롭
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width = imgSelectedBox.w;
+            cropCanvas.height = imgSelectedBox.h;
+            const cCtx = cropCanvas.getContext('2d');
+            cCtx.drawImage(
+                imgOriginalImg,
+                imgSelectedBox.x, imgSelectedBox.y, imgSelectedBox.w, imgSelectedBox.h,
+                0, 0, imgSelectedBox.w, imgSelectedBox.h
+            );
+
+            // 120x120 미리보기에 맞춤 렌더링
+            const pScale = Math.min(100 / imgSelectedBox.w, 100 / imgSelectedBox.h, 1.0);
+            const dw = imgSelectedBox.w * pScale;
+            const dh = imgSelectedBox.h * pScale;
+            const dx = (120 - dw) / 2;
+            const dy = (120 - dh) / 2;
+
+            imgMaskCtx.drawImage(cropCanvas, dx, dy, dw, dh);
+
+            // 윤곽선 오버레이
+            imgMaskCtx.strokeStyle = '#3b82f6';
+            imgMaskCtx.lineWidth = 2;
+            imgMaskCtx.strokeRect(dx, dy, dw, dh);
+
+            document.getElementById('img-mask-status').textContent = `좌표: (${imgSelectedBox.x}, ${imgSelectedBox.y}) · ${imgSelectedBox.w}x${imgSelectedBox.h}px`;
+        }
+
+        // 이미지 캔버스 마우스 조작
+        let imgDragMoved = false;
+        imgMainCanvas.onmousedown = (e) => {
+            const rect = imgMainCanvas.getBoundingClientRect();
+            imgStartX = e.clientX - rect.left;
+            imgStartY = e.clientY - rect.top;
+            imgIsDragging = true;
+            imgDragMoved = false;
+        };
+
+        imgMainCanvas.onmousemove = (e) => {
+            if (!imgIsDragging) return;
+            imgDragMoved = true;
+            const rect = imgMainCanvas.getBoundingClientRect();
+            const currX = e.clientX - rect.left;
+            const currY = e.clientY - rect.top;
+
+            const x = Math.round(Math.min(imgStartX, currX) / imgScale);
+            const y = Math.round(Math.min(imgStartY, currY) / imgScale);
+            const w = Math.round(Math.abs(currX - imgStartX) / imgScale);
+            const h = Math.round(Math.abs(currY - imgStartY) / imgScale);
+
+            if (w > 5 && h > 5) {
+                imgSelectedBox = { x, y, w, h };
+                drawImgMain();
+                syncImgInputsWithBox();
+            }
+        };
+
+        imgMainCanvas.onmouseup = (e) => {
+            if (!imgIsDragging) return;
+            imgIsDragging = false;
+
+            if (!imgDragMoved) {
+                // 단순 클릭 시: 클릭 지점을 중심으로 70x70 박스 자동 생성
+                const rect = imgMainCanvas.getBoundingClientRect();
+                const clickX = (e.clientX - rect.left) / imgScale;
+                const clickY = (e.clientY - rect.top) / imgScale;
+                const boxW = imgSelectedBox ? imgSelectedBox.w : 70;
+                const boxH = imgSelectedBox ? imgSelectedBox.h : 70;
+
+                const x = Math.max(0, Math.min(imgOriginalImg.width - boxW, Math.round(clickX - boxW / 2)));
+                const y = Math.max(0, Math.min(imgOriginalImg.height - boxH, Math.round(clickY - boxH / 2)));
+                imgSelectedBox = { x, y, w: boxW, h: boxH };
+                drawImgMain();
+                syncImgInputsWithBox();
+            }
+
+            if (imgSelectedBox) {
+                updateImgMaskPreview();
+                imgStartBtn.disabled = false;
+            }
+        };
+
+        // 키보드 방향키 미세조정 (이미지 탭 활성화 시)
+        window.addEventListener('keydown', (e) => {
+            const imgTab = document.getElementById('tab-imgbatch');
+            if (!imgTab || !imgTab.classList.contains('active')) return;
+            if (!imgSelectedBox) return;
+
+            const isInputFocused = document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+            if (isInputFocused) return;
+
+            const step = e.shiftKey ? 5 : 1;
+            let moved = false;
+
+            if (e.key === 'ArrowUp') { imgSelectedBox.y = Math.max(0, imgSelectedBox.y - step); moved = true; }
+            else if (e.key === 'ArrowDown') { imgSelectedBox.y = Math.min(imgOriginalImg.height - imgSelectedBox.h, imgSelectedBox.y + step); moved = true; }
+            else if (e.key === 'ArrowLeft') { imgSelectedBox.x = Math.max(0, imgSelectedBox.x - step); moved = true; }
+            else if (e.key === 'ArrowRight') { imgSelectedBox.x = Math.min(imgOriginalImg.width - imgSelectedBox.w, imgSelectedBox.x + step); moved = true; }
+
+            if (moved) {
+                e.preventDefault();
+                drawImgMain();
+                syncImgInputsWithBox();
+                updateImgMaskPreview();
+            }
+        });
+
+        // 일괄 제거 실행
+        function startImgBatchProcessing() {
+            if (!imgSelectedBox) return alert('워터마크 영역을 지정해 주세요.');
+            const folderPath = imgLoadedFolderPath || document.getElementById('img-folder-input').value.trim();
+            if (!folderPath) return alert('폴더 경로를 입력하거나 폴더를 먼저 불러와 주세요.');
+
+            const dilate = parseInt(document.getElementById('img-dilate-slider').value) || 4;
+            const saveModeRadio = document.querySelector('input[name="img-save-mode"]:checked');
+            const saveMode = saveModeRadio ? saveModeRadio.value : 'new_folder';
+
+            const modal = document.getElementById('progress-modal');
+            const pStatus = document.getElementById('progress-status');
+            const pPercent = document.getElementById('progress-percent');
+            const pFill = document.getElementById('progress-fill');
+
+            modal.classList.add('active');
+            pStatus.textContent = '이미지 일괄 처리 준비 중...';
+            pPercent.textContent = '0%';
+            pFill.style.width = '0%';
+
+            fetch('/api/image-batch/process-folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    folder_path: folderPath,
+                    box: imgSelectedBox,
+                    dilate: dilate,
+                    mode: 'auto',
+                    save_mode: saveMode
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                const taskId = data.task_id;
+
+                const interval = setInterval(() => {
+                    fetch(`/api/progress/${taskId}`)
+                    .then(r => r.json())
+                    .then(task => {
+                        const pct = Math.round((task.progress || 0) * 100);
+                        pPercent.textContent = `${pct}%`;
+                        pFill.style.width = `${pct}%`;
+                        if (task.status) pStatus.textContent = task.status;
+
+                        if (task.done) {
+                            clearInterval(interval);
+                            setTimeout(() => {
+                                modal.classList.remove('active');
+                                if (task.error) {
+                                    alert('오류 발생: ' + task.error);
+                                } else {
+                                    const outDir = task.output_dir || '';
+                                    alert(`🎉 워터마크 일괄 제거 완료!\n\n저장 위치:\n${outDir}`);
+                                    imgStartBtn.textContent = '✅ 일괄 처리 완료!';
+                                    imgStartBtn.style.background = '#10b981';
+                                    setTimeout(() => {
+                                        imgStartBtn.textContent = '🚀 폴더 내 모든 이미지 일괄 제거 시작';
+                                        imgStartBtn.style.background = '';
+                                    }, 4000);
+                                }
+                            }, 600);
+                        }
+                    })
+                    .catch(err => {
+                        clearInterval(interval);
+                        modal.classList.remove('active');
+                        alert('작업 상태 조회 실패: ' + err.message);
+                    });
+                }, 500);
+            })
+            .catch(err => {
+                modal.classList.remove('active');
+                alert('처리 시작 실패: ' + err.message);
+            });
         }
 
         // ──────────────────────────────────────

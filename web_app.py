@@ -271,6 +271,7 @@ async def process_video_endpoint(req: ProcessRequest):
 
 
 @app.get("/api/progress/{task_id}")
+@app.get("/api/tasks/{task_id}")
 async def get_progress(task_id: str):
     if task_id not in tasks:
         return JSONResponse({"error": "작업을 찾을 수 없습니다."}, status_code=404)
@@ -478,6 +479,350 @@ async def bg_process(req: BgRemoveRequest):
     t.start()
 
     return {"task_id": task_id}
+
+
+@app.post("/api/system/open-folder-dialog")
+async def open_folder_dialog():
+    """macOS Finder / 네이티브 폴더 선택 다이얼로그를 직접 호출"""
+    import platform, subprocess
+    selected_path = ""
+    system = platform.system()
+
+    if system == "Darwin":
+        cmd = """
+        osascript -e 'try
+            set folderPath to POSIX path of (choose folder with prompt "워터마크를 제거할 이미지 폴더를 선택하세요:")
+            return folderPath
+        on error
+            return ""
+        end try'
+        """
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        selected_path = res.stdout.strip()
+
+    if selected_path:
+        return {"folder_path": selected_path}
+    else:
+        return {"folder_path": "", "canceled": True}
+
+
+# ──────────────────────────────────────────────
+# 이미지 일괄 워터마크 제거 (Image Batch Processing)
+# ──────────────────────────────────────────────
+
+class ImageBatchFolderLoadRequest(BaseModel):
+    folder_path: str
+
+
+class ImageBatchFolderProcessRequest(BaseModel):
+    folder_path: str
+    box: BoxModel
+    dilate: int = 4
+    mode: str = "auto"
+    save_mode: str = "new_folder"  # 'new_folder' or 'overwrite'
+
+
+def read_image_utf8(path: str):
+    """한글 및 특수문자 경로를 안전하게 지원하는 이미지 로드"""
+    with open(path, "rb") as f:
+        bytes_data = bytearray(f.read())
+    np_arr = np.asarray(bytes_data, dtype=np.uint8)
+    return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+
+def save_image_utf8(path: str, img_bgr, ext: str):
+    """원본 해상도, 확장자 및 최고 화질을 100% 보존하며 안전하게 저장"""
+    ext_lower = ext.lower()
+    params = []
+    if ext_lower in (".jpg", ".jpeg"):
+        params = [cv2.IMWRITE_JPEG_QUALITY, 98]
+    elif ext_lower == ".png":
+        params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+    elif ext_lower == ".webp":
+        params = [cv2.IMWRITE_WEBP_QUALITY, 100]
+
+    success, enc = cv2.imencode(ext_lower, img_bgr, params)
+    if success:
+        with open(path, "wb") as f:
+            f.write(enc.tobytes())
+    else:
+        raise IOError(f"Failed to encode image to {ext}")
+
+
+def inpaint_single_image(img_bgr, box: dict, dilate_px: int = 4, mask_mode: str = "auto"):
+    """단일 이미지 워터마크 제거 및 1:1 고정밀 원본 합성"""
+    bx, by, bw, bh = box["x"], box["y"], box["w"], box["h"]
+    h, w = img_bgr.shape[:2]
+
+    # 주변 여백
+    margin = 32
+    rx = max(0, bx - margin)
+    ry = max(0, by - margin)
+    rw = min(w - rx, bw + margin * 2)
+    rh = min(h - ry, bh + margin * 2)
+
+    roi = img_bgr[ry:ry + rh, rx:rx + rw].copy()
+    local_box = (bx - rx, by - ry, bw, bh)
+
+    inpaint_mask = create_precise_shape_mask(roi, local_box, dilate_px=dilate_px, mask_mode=mask_mode)
+    blend_mask = create_feathered_blend_mask(inpaint_mask, feather_radius=3)
+    blend_mask_3ch = np.stack([blend_mask] * 3, axis=-1)
+
+    inpainted_roi = inpainter.inpaint(roi, inpaint_mask)
+
+    orig_roi_f = roi.astype(np.float32)
+    inpaint_f = inpainted_roi.astype(np.float32)
+    blended = inpaint_f * blend_mask_3ch + orig_roi_f * (1.0 - blend_mask_3ch)
+
+    result = img_bgr.copy()
+    result[ry:ry + rh, rx:rx + rw] = blended.astype(np.uint8)
+    return result
+
+
+def run_image_batch_folder_task(task_id: str, folder_path: str, box: dict, dilate: int, mode: str, save_mode: str):
+    import unicodedata, re
+    try:
+        norm_folder = unicodedata.normalize("NFC", folder_path.strip().strip("'\""))
+        p = Path(norm_folder).expanduser().resolve()
+        if not p.is_dir():
+            norm_folder_nfd = unicodedata.normalize("NFD", folder_path.strip().strip("'\""))
+            p = Path(norm_folder_nfd).expanduser().resolve()
+            if not p.is_dir():
+                raise FileNotFoundError(f"폴더를 찾을 수 없습니다: {folder_path}")
+
+        valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        files = [f for f in os.listdir(p) if os.path.splitext(f)[1].lower() in valid_exts and not f.startswith(".")]
+        files.sort(key=lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)])
+
+        if not files:
+            raise ValueError("해당 폴더에 지원되는 이미지 파일이 없습니다.")
+
+        total_count = len(files)
+        tasks[task_id]["total"] = total_count
+
+        # 출력 폴더 결정
+        if save_mode == "overwrite":
+            backup_dir = p.parent / f"{p.name}_backup"
+            if not backup_dir.exists():
+                shutil.copytree(p, backup_dir)
+            out_dir = p
+        else:
+            out_dir = p.parent / f"{p.name}_clean"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, fname in enumerate(files):
+            tasks[task_id]["progress"] = i / total_count
+            tasks[task_id]["status"] = f"[{i+1}/{total_count}] {fname} 처리 중..."
+
+            src_file = p / fname
+            dst_file = out_dir / fname
+
+            img_bgr = read_image_utf8(str(src_file))
+            if img_bgr is None:
+                continue
+
+            cleaned_img = inpaint_single_image(img_bgr, box, dilate_px=dilate, mask_mode=mode)
+            ext = os.path.splitext(fname)[1]
+            save_image_utf8(str(dst_file), cleaned_img, ext)
+
+        tasks[task_id]["progress"] = 1.0
+        tasks[task_id]["done"] = True
+        tasks[task_id]["output_dir"] = str(out_dir)
+        tasks[task_id]["status"] = f"총 {total_count}개 이미지 워터마크 제거 완료!"
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        tasks[task_id]["status"] = f"오류 발생: {str(e)}"
+        tasks[task_id]["error"] = str(e)
+        tasks[task_id]["done"] = True
+
+
+@app.post("/api/image-batch/load-folder")
+async def load_image_folder(req: ImageBatchFolderLoadRequest):
+    """지정된 폴더를 탐색하여 첫 번째 이미지를 로드하고 이미지 목록을 반환"""
+    import unicodedata, re, base64
+    folder_str = req.folder_path.strip().strip("'\"")
+    if not folder_str:
+        return JSONResponse({"error": "폴더 경로를 입력해 주세요."}, status_code=400)
+
+    p = Path(unicodedata.normalize("NFC", folder_str)).expanduser().resolve()
+    if not p.is_dir():
+        p = Path(unicodedata.normalize("NFD", folder_str)).expanduser().resolve()
+        if not p.is_dir():
+            return JSONResponse({"error": f"존재하지 않는 폴더 경로입니다: {folder_str}"}, status_code=400)
+
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    files = [f for f in os.listdir(p) if os.path.splitext(f)[1].lower() in valid_exts and not f.startswith(".")]
+    files.sort(key=lambda s: [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)])
+
+    if not files:
+        return JSONResponse({"error": "해당 폴더에 이미지 파일(JPG, PNG, WebP)이 없습니다."}, status_code=400)
+
+    first_file = p / files[0]
+    first_bgr = read_image_utf8(str(first_file))
+    if first_bgr is None:
+        return JSONResponse({"error": f"첫 번째 이미지 파일을 읽을 수 없습니다: {files[0]}"}, status_code=400)
+
+    h, w = first_bgr.shape[:2]
+
+    # 세션 디렉토리에 첫 프레임 저장하여 URL 생성
+    session_id = f"imgbatch_{uuid.uuid4()}"
+    sess_dir = TEMP_DIR / session_id
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = sess_dir / "first_preview.png"
+    save_image_utf8(str(preview_path), first_bgr, ".png")
+
+    sessions[session_id] = {
+        "folder_path": str(p),
+        "files": files,
+        "width": w,
+        "height": h,
+    }
+
+    return {
+        "session_id": session_id,
+        "first_image_url": f"/api/files/{session_id}/first_preview.png",
+        "first_image_name": files[0],
+        "width": w,
+        "height": h,
+        "count": len(files),
+        "sample_files": files[:8],
+        "all_files": files,
+    }
+
+
+class ImageBatchSelectImageRequest(BaseModel):
+    session_id: str
+    filename: str
+
+
+@app.post("/api/image-batch/select-image")
+async def select_image(req: ImageBatchSelectImageRequest):
+    """폴더 내에서 사용자가 선택한 이미지를 기준 이미지로 로드"""
+    sess = sessions.get(req.session_id)
+    if not sess or "folder_path" not in sess:
+        return JSONResponse({"error": "세션을 찾을 수 없습니다."}, status_code=400)
+
+    p = Path(sess["folder_path"])
+    target_file = p / req.filename
+    if not target_file.is_file():
+        return JSONResponse({"error": f"파일을 찾을 수 없습니다: {req.filename}"}, status_code=404)
+
+    img_bgr = read_image_utf8(str(target_file))
+    if img_bgr is None:
+        return JSONResponse({"error": "이미지를 읽을 수 없습니다."}, status_code=400)
+
+    h, w = img_bgr.shape[:2]
+    sess_dir = TEMP_DIR / req.session_id
+    preview_name = f"preview_{uuid.uuid4().hex[:8]}.png"
+    preview_path = sess_dir / preview_name
+    save_image_utf8(str(preview_path), img_bgr, ".png")
+
+    return {
+        "image_url": f"/api/files/{req.session_id}/{preview_name}",
+        "filename": req.filename,
+        "width": w,
+        "height": h,
+    }
+
+
+@app.post("/api/image-batch/upload-single")
+async def upload_single_image(file: UploadFile = File(...)):
+    """단일 이미지를 직접 업로드하여 워터마크 영역 지정용으로 사용"""
+    session_id = f"imgbatch_{uuid.uuid4()}"
+    sess_dir = TEMP_DIR / session_id
+    sess_dir.mkdir(parents=True, exist_ok=True)
+
+    file_bytes = await file.read()
+    np_arr = np.frombuffer(file_bytes, np.uint8)
+    img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        return JSONResponse({"error": "이미지 파일을 읽을 수 없습니다."}, status_code=400)
+
+    h, w = img_bgr.shape[:2]
+    preview_path = sess_dir / "first_preview.png"
+    save_image_utf8(str(preview_path), img_bgr, ".png")
+
+    sessions[session_id] = {
+        "single_image": str(preview_path),
+        "width": w,
+        "height": h,
+    }
+
+    return {
+        "session_id": session_id,
+        "first_image_url": f"/api/files/{session_id}/first_preview.png",
+        "first_image_name": file.filename,
+        "width": w,
+        "height": h,
+        "count": 1,
+    }
+
+
+@app.post("/api/image-batch/process-folder")
+async def process_image_folder(req: ImageBatchFolderProcessRequest):
+    """폴더 내 이미지 일괄 워터마크 제거 작업 시작"""
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "progress": 0.0,
+        "done": False,
+        "status": "이미지 일괄 처리 준비 중...",
+    }
+
+    t = threading.Thread(
+        target=run_image_batch_folder_task,
+        args=(
+            task_id,
+            req.folder_path,
+            req.box.model_dump(),
+            req.dilate,
+            req.mode,
+            req.save_mode,
+        ),
+    )
+    t.daemon = True
+    t.start()
+
+    return {"task_id": task_id}
+
+
+@app.post("/api/image-batch/process-files")
+async def process_image_files(
+    files: list[UploadFile] = File(...),
+    x: int = 0,
+    y: int = 0,
+    w: int = 70,
+    h: int = 70,
+    dilate: int = 4,
+    mode: str = "auto",
+):
+    """웹 브라우저에서 다중 업로드된 이미지들을 일괄 처리 후 ZIP 파일 생성"""
+    import zipfile
+    session_id = f"imgbatch_{uuid.uuid4()}"
+    sess_dir = TEMP_DIR / session_id
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = sess_dir / "cleaned_images.zip"
+
+    box = {"x": x, "y": y, "w": w, "h": h}
+
+    with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file in files:
+            file_bytes = await file.read()
+            np_arr = np.frombuffer(file_bytes, np.uint8)
+            img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                continue
+
+            cleaned_img = inpaint_single_image(img_bgr, box, dilate_px=dilate, mask_mode=mode)
+            ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
+            success, enc = cv2.imencode(ext, cleaned_img)
+            if success:
+                zipf.writestr(file.filename, enc.tobytes())
+
+    return {
+        "zip_url": f"/api/files/{session_id}/cleaned_images.zip",
+        "count": len(files),
+    }
 
 
 if __name__ == "__main__":
