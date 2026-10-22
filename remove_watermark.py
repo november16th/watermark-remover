@@ -20,8 +20,13 @@ Gemini AI 등이 생성한 영상의 워터마크를 AI 인페인팅으로 자�
 import argparse
 import glob
 import os
-import subprocess
 import sys
+
+# macOS OpenMP 중복 로드 충돌 방지 (OMP: Error #15 크래시 방지)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -76,6 +81,10 @@ def create_precise_shape_mask(roi_img, watermark_local_box, dilate_px=4, mask_mo
     if mask_mode == "box":
         mask = np.zeros((rh, rw), dtype=np.uint8)
         cv2.rectangle(mask, (lx, ly), (lx + lw, ly + lh), 255, -1)
+        if dilate_px > 0:
+            ksize = dilate_px * 2 + 1
+            kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (ksize, ksize))
+            mask = cv2.dilate(mask, kernel_dilate, iterations=1)
         return mask
 
     crop = roi_img[ly:ly+lh, lx:lx+lw]
@@ -497,6 +506,10 @@ class LamaInpainter:
 
         # 이미지와 마스크 전처리
         image_tensor, mask_tensor = self._prepare(pil_image, pil_mask, self.device)
+
+        if not hasattr(self, "_first_inpaint_done"):
+            print(f"🧠 [LaMa] 최초 AI 인페인팅 추론 수행 (디바이스: {self.device}, ROI 크기: {orig_w}x{orig_h})")
+            self._first_inpaint_done = True
 
         # LaMa 추론
         with torch.inference_mode():

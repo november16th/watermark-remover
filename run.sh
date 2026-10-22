@@ -4,6 +4,10 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
+# macOS OpenMP 중복 로드 충돌 방지 (OMP: Error #15 크래시 방지)
+export KMP_DUPLICATE_LIB_OK=TRUE
+export OMP_NUM_THREADS=1
+
 VENV_PYTHON="$DIR/.venv/bin/python"
 
 # 1. 가상환경 및 패키지 검증 (없으면 자동으로 setup_env.sh 실행)

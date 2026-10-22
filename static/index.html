@@ -249,6 +249,16 @@
                 <div class="canvas-container">
                     <canvas id="main-canvas"></canvas>
                 </div>
+
+                <!-- 비디오 프레임 탐색 슬라이더 (영상 중간 워터마크 탐색용) -->
+                <div id="video-timeline-container" style="display: none; margin-top: 12px; padding: 10px 14px; background: #0f172a; border: 1px solid var(--border); border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-size: 0.82rem; font-weight: 600; color: #94a3b8;">⏱️ 영상 프레임 탐색 (워터마크 출현 시점으로 이동)</span>
+                        <span id="timeline-time" style="font-size: 0.85rem; font-family: monospace; color: #60a5fa; font-weight: 700;">0.0s / 0.0s</span>
+                    </div>
+                    <input type="range" id="video-timeline-slider" min="0" max="10" step="0.1" value="0" style="width: 100%; accent-color: var(--accent);" oninput="onTimelineInput(this.value)" onchange="onTimelineChange(this.value)">
+                </div>
+
                 <p class="info-text" style="text-align: center; margin-top: 8px; line-height: 1.5;">
                     마우스를 사용해서 워터마크를 드래그해주세요.<br>
                     키보드 방향키로 미세조정이 가능합니다.
@@ -257,6 +267,27 @@
 
             <!-- Controls -->
             <div class="sidebar">
+                <!-- 제거 모드 선택 카드 -->
+                <div class="card">
+                    <div class="sidebar-title">제거 모드 선택</div>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                        <label class="radio-card selected" id="opt-mode-auto" style="padding: 10px 12px; cursor: pointer;">
+                            <input type="radio" name="watermark-mode" value="auto" checked onchange="onModeChange('auto')">
+                            <div>
+                                <div style="font-weight: 600; font-size: 0.88rem; color: #fff;">✦ AI 스파클 정밀 모드</div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">Gemini 다이아몬드 별 아이콘 윤곽만 정밀 분리</div>
+                            </div>
+                        </label>
+                        <label class="radio-card" id="opt-mode-box" style="padding: 10px 12px; cursor: pointer;">
+                            <input type="radio" name="watermark-mode" value="box" onchange="onModeChange('box')">
+                            <div>
+                                <div style="font-weight: 600; font-size: 0.88rem; color: #fff;">⬛ 사각형 박스 (수동 지정)</div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">지정한 박스 전체 영역 복원 (영상 중간 출현 추천)</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="sidebar-title">마스크 미리보기</div>
                     <div class="preview-box" style="margin-top: 12px;">
@@ -530,6 +561,21 @@
         let startX = 0, startY = 0;
         let selectedBox = null; // {x, y, w, h} in original image coords
         let scale = 1.0;
+        let currentMode = 'auto'; // 'auto' (스파클 정밀) 또는 'box' (사각형 박스 전체 복원)
+        let videoDuration = 0;
+
+        function onModeChange(newMode) {
+            currentMode = newMode;
+            const optAuto = document.getElementById('opt-mode-auto');
+            const optBox = document.getElementById('opt-mode-box');
+            if (optAuto) optAuto.classList.toggle('selected', newMode === 'auto');
+            if (optBox) optBox.classList.toggle('selected', newMode === 'box');
+            const radioAuto = document.querySelector('input[name="watermark-mode"][value="auto"]');
+            const radioBox = document.querySelector('input[name="watermark-mode"][value="box"]');
+            if (radioAuto) radioAuto.checked = (newMode === 'auto');
+            if (radioBox) radioBox.checked = (newMode === 'box');
+            if (selectedBox) updateMaskPreview();
+        }
 
         dilateSlider.oninput = () => {
             dilateVal.textContent = dilateSlider.value + 'px';
@@ -648,6 +694,20 @@
                             updateMaskPreview();
                             startBtn.disabled = false;
                         }
+
+                        // 비디오 타임라인 슬라이더 초기화
+                        if (data.duration && data.duration > 0) {
+                            videoDuration = data.duration;
+                            const timelineContainer = document.getElementById('video-timeline-container');
+                            const timelineSlider = document.getElementById('video-timeline-slider');
+                            const timelineTime = document.getElementById('timeline-time');
+                            if (timelineContainer && timelineSlider && timelineTime) {
+                                timelineContainer.style.display = 'block';
+                                timelineSlider.max = data.duration;
+                                timelineSlider.value = 0;
+                                timelineTime.textContent = `0.0s / ${data.duration}s`;
+                            }
+                        }
                     };
                     img.src = data.frame_url + '?t=' + Date.now();
                 })
@@ -663,6 +723,38 @@
                         if (e.target.files.length > 0) handleFile(e.target.files[0]);
                     };
                 });
+        }
+
+        function onTimelineInput(val) {
+            const timelineTime = document.getElementById('timeline-time');
+            if (timelineTime) {
+                timelineTime.textContent = `${parseFloat(val).toFixed(1)}s / ${videoDuration.toFixed(1)}s`;
+            }
+        }
+
+        let timelineDebounce = null;
+        function onTimelineChange(val) {
+            onTimelineInput(val);
+            clearTimeout(timelineDebounce);
+            timelineDebounce = setTimeout(() => {
+                fetch('/api/extract-frame-at', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ time_sec: parseFloat(val) })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) return alert(data.error);
+                    const img = new Image();
+                    img.onload = () => {
+                        originalImg = img;
+                        drawMain();
+                        updateMaskPreview();
+                    };
+                    img.src = data.frame_url + '?t=' + Date.now();
+                })
+                .catch(err => console.error('프레임 로드 실패:', err));
+            }, 50);
         }
 
         function initCanvas() {
@@ -840,7 +932,7 @@
             const payload = {
                 box: selectedBox,
                 dilate: parseInt(dilateSlider.value),
-                mode: 'auto'
+                mode: currentMode
             };
 
             fetch('/api/preview-mask', {
@@ -855,7 +947,7 @@
                     mImg.onload = () => {
                         maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
                         maskCtx.drawImage(mImg, 0, 0, maskCanvas.width, maskCanvas.height);
-                        document.getElementById('mask-status').innerHTML = '마스크 적용 완료';
+                        document.getElementById('mask-status').innerHTML = currentMode === 'box' ? '⬛ 사각형 영역 마스크' : '✦ 정밀 스파클 마스크';
                     };
                     mImg.src = data.mask_url + '?t=' + Date.now();
                 }
@@ -876,7 +968,7 @@
             const payload = {
                 box: selectedBox,
                 dilate: parseInt(dilateSlider.value),
-                mode: 'auto'
+                mode: currentMode
             };
 
             fetch('/api/process', {
@@ -902,10 +994,15 @@
         }
 
         function pollProgress(taskId) {
+            let failCount = 0;
             const interval = setInterval(() => {
                 fetch(`/api/progress/${taskId}`)
-                    .then(r => r.json())
+                    .then(r => {
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        return r.json();
+                    })
                     .then(data => {
+                        failCount = 0; // 성공 시 카운터 초기화
                         const percent = Math.round(data.progress * 100);
                         document.getElementById('progress-fill').style.width = percent + '%';
                         document.getElementById('progress-percent').textContent = percent + '%';
@@ -914,7 +1011,22 @@
                         if (data.done) {
                             clearInterval(interval);
                             document.getElementById('progress-modal').classList.remove('active');
+                            startBtn.disabled = false;
+                            if (data.error) {
+                                alert('처리 중 오류가 발생했습니다:\n' + data.error);
+                                return;
+                            }
                             showResult(data.clean_url, data.orig_url);
+                        }
+                    })
+                    .catch(err => {
+                        failCount++;
+                        console.warn('진행 상태 폴링 중 오류 (' + failCount + '/3):', err);
+                        if (failCount >= 3) {
+                            clearInterval(interval);
+                            document.getElementById('progress-modal').classList.remove('active');
+                            startBtn.disabled = false;
+                            alert('⚠️ 서버와의 연결이 끊어졌습니다 (서버가 비정상 종료됨).\n터미널 콘솔 로그를 확인하시고 서버를 다시 실행해 주세요.');
                         }
                     });
             }, 500);

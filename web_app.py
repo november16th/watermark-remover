@@ -4,6 +4,12 @@ FastAPI 기반 고품질 AI 영상 워터마크 정밀 제거 웹 서버
 """
 
 import os
+import sys
+
+# macOS OpenMP 중복 로드 충돌 방지 (OMP: Error #15 크래시 원천 차단)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import shutil
 import subprocess
 import tempfile
@@ -81,6 +87,10 @@ class ProcessRequest(BaseModel):
     mode: str = "auto"  # 'auto' (다이아몬드 정밀), 'diamond' (강제 다이아몬드), 'box' (전체 사각형)
 
 
+class FrameRequest(BaseModel):
+    time_sec: float = 0.0
+
+
 @app.get("/")
 def read_root():
     return FileResponse(STATIC_DIR / "index.html")
@@ -97,6 +107,9 @@ async def extract_frame(video: UploadFile = File(...)):
         shutil.copyfileobj(video.file, f)
 
     cap = cv2.VideoCapture(str(input_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / fps if fps > 0 else 0.0
     ret, frame = cap.read()
     cap.release()
 
@@ -114,11 +127,54 @@ async def extract_frame(video: UploadFile = File(...)):
         "input_video": str(input_path),
         "frame_path": str(frame_path),
         "frame_bgr": frame,
+        "fps": fps,
+        "total_frames": total_frames,
+        "duration": duration,
     }
 
     return {
         "session_id": session_id,
         "frame_url": f"/api/files/{session_id}/frame_first.png",
+        "suggested_box": {"x": sx, "y": sy, "w": sw, "h": sh},
+        "duration": round(duration, 2),
+        "fps": round(fps, 2),
+        "total_frames": total_frames,
+    }
+
+
+@app.post("/api/extract-frame-at")
+async def extract_frame_at(req: FrameRequest):
+    """비디오의 특정 시간(초) 프레임을 추출하여 화면 갱신"""
+    if not sessions:
+        return JSONResponse({"error": "세션을 찾을 수 없습니다."}, status_code=400)
+
+    session_id = list(sessions.keys())[-1]
+    sess = sessions[session_id]
+    input_path = sess["input_video"]
+
+    cap = cv2.VideoCapture(input_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    target_frame = max(0, int(req.time_sec * fps))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret:
+        return JSONResponse({"error": "해당 시간의 프레임을 추출할 수 없습니다."}, status_code=400)
+
+    sess_path = TEMP_DIR / session_id
+    frame_path = sess_path / "frame_current.png"
+    cv2.imwrite(str(frame_path), frame)
+
+    sess["frame_bgr"] = frame
+    sess["frame_path"] = str(frame_path)
+
+    # 이 시점의 프레임에서 추천 박스도 재계산
+    suggested = detect_watermark_region(frame, corner="bottom-right")
+    sx, sy, sw, sh = suggested
+
+    return {
+        "frame_url": f"/api/files/{session_id}/frame_current.png",
         "suggested_box": {"x": sx, "y": sy, "w": sw, "h": sh},
     }
 
@@ -146,7 +202,7 @@ async def preview_mask(req: ProcessRequest):
     local_bx = bx - rx
     local_by = by - ry
 
-    # 정밀 스파클 마스크 생성
+    # 정밀 스파클 또는 사각형 박스 마스크 생성
     mask = create_precise_shape_mask(
         roi, (local_bx, local_by, bw, bh), dilate_px=req.dilate, mask_mode=req.mode
     )
@@ -163,88 +219,127 @@ async def preview_mask(req: ProcessRequest):
 
 
 def run_processing_task(task_id, session_id, box, dilate_px, mode="auto"):
-    sess = sessions[session_id]
-    input_path = sess["input_video"]
-    sess_dir = TEMP_DIR / session_id
-    output_path = sess_dir / "cleaned.mp4"
+    print(f"\n==================================================")
+    print(f"🎬 [TASK START] 워터마크 제거 작업 시작")
+    print(f"   Task ID: {task_id}")
+    print(f"   모드: {mode} (box=사각형박스, auto=스파클정밀)")
+    print(f"   확장(dilate): {dilate_px}px")
+    print(f"   지정 영역: (x={box.x}, y={box.y}, w={box.w}, h={box.h})")
+    print(f"==================================================")
+    try:
+        sess = sessions[session_id]
+        input_path = sess["input_video"]
+        sess_dir = TEMP_DIR / session_id
+        output_path = sess_dir / "cleaned.mp4"
 
-    cap = cv2.VideoCapture(input_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap = cv2.VideoCapture(input_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # ROI 영역
-    margin = 28
-    bx, by, bw, bh = box.x, box.y, box.w, box.h
-    rx = max(0, bx - margin)
-    ry = max(0, by - margin)
-    rw = min(width - rx, bw + 2 * margin)
-    rh = min(height - ry, bh + 2 * margin)
+        print(f"📹 [VIDEO INFO] 해상도: {width}x{height}, FPS: {fps:.2f}, 총 프레임: {total_frames}")
 
-    local_bx = bx - rx
-    local_by = by - ry
+        # ROI 영역
+        margin = 28
+        bx, by, bw, bh = box.x, box.y, box.w, box.h
+        rx = max(0, bx - margin)
+        ry = max(0, by - margin)
+        rw = min(width - rx, bw + 2 * margin)
+        rh = min(height - ry, bh + 2 * margin)
 
-    # 첫 프레임 기준 고정 정밀 마스크 생성
-    ret_first, first_frame = cap.read()
-    first_roi = first_frame[ry:ry + rh, rx:rx + rw]
-    inpaint_mask = create_precise_shape_mask(
-        first_roi, (local_bx, local_by, bw, bh), dilate_px=dilate_px, mask_mode=mode
-    )
-    # 실제 마스킹된 스파클 외곽 3px만 부드럽게 합성하여 주변 배경 왜곡을 0으로 만듦
-    blend_mask = create_feathered_blend_mask(inpaint_mask, feather_radius=3)
-    blend_mask_3ch = np.stack([blend_mask] * 3, axis=-1)
+        local_bx = bx - rx
+        local_by = by - ry
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        print(f"✂️ [ROI INFO] 워터마크: ({bx}, {by}, {bw}x{bh}) -> ROI: ({rx}, {ry}, {rw}x{rh})")
 
-    temp_raw = sess_dir / "temp_raw.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
+        # 기준 프레임 (사용자가 탐색한 현재 프레임이 있으면 그것을 우선 사용, 없으면 첫 프레임)
+        base_frame = sess.get("frame_bgr")
+        if base_frame is None:
+            ret_first, base_frame = cap.read()
+        base_roi = base_frame[ry:ry + rh, rx:rx + rw]
 
-    prev_roi = None
-    # 0.70으로 안정화 가중치를 높여 프레임 간 펄럭임/일렁거림 완화
-    ema_alpha = 0.70
-    idx = 0
+        print(f"🎭 [MASK] 마스크 생성 중 (모드: {mode})...")
+        inpaint_mask = create_precise_shape_mask(
+            base_roi, (local_bx, local_by, bw, bh), dilate_px=dilate_px, mask_mode=mode
+        )
+        # 실제 마스킹된 외곽 3px만 부드럽게 합성하여 주변 배경 왜곡을 최소화
+        blend_mask = create_feathered_blend_mask(inpaint_mask, feather_radius=3)
+        blend_mask_3ch = np.stack([blend_mask] * 3, axis=-1)
+        print(f"✅ [MASK] 마스크 생성 완료 (크기: {inpaint_mask.shape})")
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-        roi = frame[ry:ry + rh, rx:rx + rw].copy()
-        inpainted_roi = inpainter.inpaint(roi, inpaint_mask)
+        temp_raw = sess_dir / "temp_raw.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(str(temp_raw), fourcc, fps, (width, height))
 
-        # 시간축 스무딩 (시간적 연속성 보장)
-        if prev_roi is not None:
-            inpainted_roi = cv2.addWeighted(
-                inpainted_roi, ema_alpha, prev_roi, 1.0 - ema_alpha, 0
-            )
-        prev_roi = inpainted_roi.copy()
+        prev_roi = None
+        # 0.70으로 안정화 가중치를 높여 프레임 간 펄럭임/일렁거림 완화
+        ema_alpha = 0.70
+        idx = 0
 
-        # 정밀 합성: 스파클 픽셀 자리만 원본에 대치, 바깥 배경은 원본 100% 보존
-        orig_roi_f = frame[ry:ry + rh, rx:rx + rw].astype(np.float32)
-        inpaint_f = inpainted_roi.astype(np.float32)
-        blended = inpaint_f * blend_mask_3ch + orig_roi_f * (1.0 - blend_mask_3ch)
-        frame[ry:ry + rh, rx:rx + rw] = blended.astype(np.uint8)
+        print(f"🤖 [INPAINT] AI 인페인팅 엔진 실행 시작...")
+        tasks[task_id]["status"] = f"AI 복원 처리 중... (0/{total_frames})"
 
-        out.write(frame)
-        idx += 1
-        tasks[task_id]["progress"] = idx / max(total_frames, 1)
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    cap.release()
-    out.release()
+            roi = frame[ry:ry + rh, rx:rx + rw].copy()
+            inpainted_roi = inpainter.inpaint(roi, inpaint_mask)
 
-    tasks[task_id]["status"] = "오디오 합성 및 최종 인코딩 중..."
-    merge_audio_ffmpeg(str(temp_raw), input_path, str(output_path), crf=18)
+            # 시간축 스무딩 (시간적 연속성 보장)
+            if prev_roi is not None:
+                inpainted_roi = cv2.addWeighted(
+                    inpainted_roi, ema_alpha, prev_roi, 1.0 - ema_alpha, 0
+                )
+            prev_roi = inpainted_roi.copy()
 
-    if temp_raw.exists():
-        temp_raw.unlink()
+            # 정밀 합성: 마스크 자리만 복원치로 대치, 바깥 배경은 원본 100% 보존
+            orig_roi_f = frame[ry:ry + rh, rx:rx + rw].astype(np.float32)
+            inpaint_f = inpainted_roi.astype(np.float32)
+            blended = inpaint_f * blend_mask_3ch + orig_roi_f * (1.0 - blend_mask_3ch)
+            frame[ry:ry + rh, rx:rx + rw] = blended.astype(np.uint8)
 
-    tasks[task_id]["progress"] = 1.0
-    tasks[task_id]["done"] = True
-    tasks[task_id]["status"] = "완료!"
-    tasks[task_id]["clean_url"] = f"/api/files/{session_id}/cleaned.mp4"
-    tasks[task_id]["orig_url"] = f"/api/files/{session_id}/input.mp4"
+            out.write(frame)
+            idx += 1
+            progress = idx / max(total_frames, 1)
+            tasks[task_id]["progress"] = progress
+
+            # 15프레임마다 또는 첫/마지막 프레임에 콘솔 및 상태창 로그 출력
+            if idx == 1 or idx % 15 == 0 or idx == total_frames:
+                percent = int(progress * 100)
+                status_msg = f"AI 복원 처리 중... ({idx}/{total_frames} 프레임, {percent}%)"
+                tasks[task_id]["status"] = status_msg
+                print(f"⚡ [PROGRESS] {status_msg}")
+
+        cap.release()
+        out.release()
+
+        print(f"🔊 [AUDIO] 오디오 합성 및 ffmpeg 최종 인코딩 시작...")
+        tasks[task_id]["status"] = "오디오 합성 및 최종 인코딩 중..."
+        merge_audio_ffmpeg(str(temp_raw), input_path, str(output_path), crf=18)
+
+        if temp_raw.exists():
+            temp_raw.unlink()
+
+        tasks[task_id]["progress"] = 1.0
+        tasks[task_id]["done"] = True
+        tasks[task_id]["status"] = "완료!"
+        tasks[task_id]["clean_url"] = f"/api/files/{session_id}/cleaned.mp4"
+        tasks[task_id]["orig_url"] = f"/api/files/{session_id}/input.mp4"
+        print(f"🎉 [SUCCESS] 워터마크 제거 완료! 결과 파일: {output_path}\n")
+
+    except Exception as e:
+        import traceback
+        err_detail = traceback.format_exc()
+        print(f"\n❌ [ERROR] 처리 중 예외 발생:")
+        print(err_detail)
+        tasks[task_id]["status"] = f"오류 발생: {str(e)}"
+        tasks[task_id]["error"] = str(e)
+        tasks[task_id]["done"] = True
 
 
 @app.post("/api/process")
